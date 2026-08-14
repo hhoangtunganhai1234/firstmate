@@ -43,6 +43,16 @@ case "$*" in
 esac
 exit 0
 SH
+  cat > "$fakebin/rm" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ -n "${FM_FAKE_RM_FAIL_MATCH:-}" ]; then
+  case " $* " in
+    *"$FM_FAKE_RM_FAIL_MATCH"*) exit 1 ;;
+  esac
+fi
+/bin/rm "$@"
+SH
   cat > "$fakebin/ps" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -283,6 +293,41 @@ test_uninstall_preserves_files_when_lifecycle_fails() {
     assert_contains "$out" 'no files were removed' "$mode lifecycle refusal did not promise preservation"
   done
   pass 'Codex Telegram waker uninstall preserves units and state unless shutdown is proven'
+}
+
+test_uninstall_reports_removal_failures() {
+  local dir units out status mode match
+  for mode in units runtime; do
+    dir=$(make_case "uninstall-$mode-removal-failure")
+    install_case "$dir"
+    units="$dir/xdg/systemd/user"
+    : > "$dir/systemctl.log"
+    case "$mode" in
+      units) match=firstmate-codex-telegram-waker.service ;;
+      runtime) match="$dir/home/state/codex-telegram-waker" ;;
+    esac
+    set +e
+    out=$(run_env "$dir" env FM_FAKE_RM_FAIL_MATCH="$match" "$WAKER" uninstall 2>&1)
+    status=$?
+    set -e
+    [ "$status" -ne 0 ] || fail "uninstall accepted a $mode removal failure"
+    case "$out" in
+      *'uninstalled:'*) fail "uninstall reported success after a $mode removal failure" ;;
+    esac
+    if [ "$mode" = units ]; then
+      [ -f "$units/firstmate-codex-telegram-waker.path" ] || fail 'unit removal failure did not preserve the path unit'
+      [ -f "$units/firstmate-codex-telegram-waker.service" ] || fail 'unit removal failure did not preserve the service unit'
+      [ -d "$dir/home/state/codex-telegram-waker" ] || fail 'unit removal failure did not preserve runtime state'
+      assert_contains "$out" 'could not remove managed user units' 'unit removal failure was not explicit'
+    else
+      [ -d "$dir/home/state/codex-telegram-waker" ] || fail 'runtime removal failure was not preserved for recovery'
+      assert_contains "$out" 'could not remove Codex Telegram waker runtime state' 'runtime removal failure was not explicit'
+    fi
+    case "$(cat "$dir/systemctl.log")" in
+      *'daemon-reload'*) fail "uninstall reloaded systemd after a $mode removal failure" ;;
+    esac
+  done
+  pass 'Codex Telegram waker uninstall reports every removal failure'
 }
 
 test_state_symlink_is_rejected_before_uninstall() {
@@ -547,6 +592,7 @@ test_liveness_requires_proc_and_advancing_beat() {
 test_install_uninstall_are_bounded
 test_uninstall_refuses_foreign_unit
 test_uninstall_preserves_files_when_lifecycle_fails
+test_uninstall_reports_removal_failures
 test_state_symlink_is_rejected_before_uninstall
 test_runtime_symlink_is_rejected_before_lifecycle_mutation
 test_busy_pending_and_unknown_defer

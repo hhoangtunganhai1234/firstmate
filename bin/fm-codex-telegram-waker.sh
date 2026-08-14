@@ -306,9 +306,13 @@ uninstall_units() {
   [ "$active_state" = inactive ] \
     || die "$SERVICE_UNIT has ActiveState=$active_state; no files were removed"
   require_owned_runtime_dir "$home" uninstall
-  rm -f -- "$service_path" "$path_path"
+  rm -f -- "$service_path" "$path_path" \
+    || die 'could not remove managed user units; runtime state was preserved'
   case "$RUNTIME_DIR" in
-    "$home/state/codex-telegram-waker") rm -rf -- "$RUNTIME_DIR" ;;
+    "$home/state/codex-telegram-waker")
+      rm -rf -- "$RUNTIME_DIR" \
+        || die 'could not remove Codex Telegram waker runtime state'
+      ;;
     *) die "refusing unexpected runtime directory: $RUNTIME_DIR" ;;
   esac
   systemctl --user daemon-reload || die 'user systemd daemon-reload failed'
