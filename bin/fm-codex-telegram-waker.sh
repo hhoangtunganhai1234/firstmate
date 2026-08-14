@@ -87,6 +87,21 @@ require_standard_state_dir() {  # <canonical-home> <action>
     || die "$action requires FM_HOME/state to resolve inside FM_HOME"
 }
 
+require_owned_runtime_dir() {  # <canonical-home> <action>
+  local home=$1 action=$2 expected runtime
+  expected="$home/state/codex-telegram-waker"
+  [ "$RUNTIME_DIR" = "$expected" ] \
+    || die "$action requires the standard Codex Telegram waker runtime directory"
+  [ ! -L "$RUNTIME_DIR" ] \
+    || die "$action requires a non-symlink Codex Telegram waker runtime directory"
+  if [ -e "$RUNTIME_DIR" ]; then
+    runtime=$(canonical_dir "$RUNTIME_DIR") \
+      || die "$action requires the waker runtime path to be a directory"
+    [ "$runtime" = "$expected" ] \
+      || die "$action requires the waker runtime directory to resolve inside FM_HOME/state"
+  fi
+}
+
 canonical_file() {  # <file>
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
   local dir base
@@ -239,6 +254,7 @@ install_units() {  # <bridge-log>
   home=$(canonical_dir "$FM_HOME") || die "FM_HOME is not an existing directory: $FM_HOME"
   [ "$FM_HOME" = "$home" ] || die 'FM_HOME must be an absolute canonical directory'
   require_standard_state_dir "$home" install
+  require_owned_runtime_dir "$home" install
   script=$(canonical_file "$0") || die "cannot resolve the tracked waker script: $0"
   reject_unsafe_value bridge-log "$bridge_log"
   reject_unsafe_value FM_HOME "$home"
@@ -271,6 +287,7 @@ uninstall_units() {
   home=$(canonical_dir "$FM_HOME") || die "FM_HOME is not an existing directory: $FM_HOME"
   [ "$FM_HOME" = "$home" ] || die 'FM_HOME must be an absolute canonical directory'
   require_standard_state_dir "$home" uninstall
+  require_owned_runtime_dir "$home" uninstall
   units=$(unit_dir)
   service_path="$units/$SERVICE_UNIT"
   path_path="$units/$PATH_UNIT"
@@ -288,6 +305,7 @@ uninstall_units() {
     || die "could not confirm $SERVICE_UNIT is inactive; no files were removed"
   [ "$active_state" = inactive ] \
     || die "$SERVICE_UNIT has ActiveState=$active_state; no files were removed"
+  require_owned_runtime_dir "$home" uninstall
   rm -f -- "$service_path" "$path_path"
   case "$RUNTIME_DIR" in
     "$home/state/codex-telegram-waker") rm -rf -- "$RUNTIME_DIR" ;;
@@ -556,6 +574,7 @@ run_service() {  # <bridge-log>
   home=$(canonical_dir "$FM_HOME") || die "FM_HOME is not an existing directory: $FM_HOME"
   [ "$FM_HOME" = "$home" ] || die 'FM_HOME must be an absolute canonical directory'
   require_standard_state_dir "$home" run
+  require_owned_runtime_dir "$home" run
   mkdir -p "$RUNTIME_DIR" || die "cannot create runtime directory: $RUNTIME_DIR"
   chmod 700 "$RUNTIME_DIR" || die "cannot protect runtime directory: $RUNTIME_DIR"
   initialize_state "$bridge_log" || die 'could not initialize private cursor state'

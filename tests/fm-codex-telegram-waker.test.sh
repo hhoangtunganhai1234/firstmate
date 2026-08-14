@@ -308,6 +308,45 @@ test_state_symlink_is_rejected_before_uninstall() {
   pass 'Codex Telegram waker rejects state symlinks before lifecycle mutation'
 }
 
+test_runtime_symlink_is_rejected_before_lifecycle_mutation() {
+  local dir units external out status
+  dir=$(make_case runtime-symlink-install)
+  units="$dir/xdg/systemd/user"
+  external="$dir/external-runtime"
+  mkdir -p "$external"
+  ln -s "$external" "$dir/home/state/codex-telegram-waker"
+  set +e
+  out=$(run_env "$dir" "$WAKER" install --bridge-log "$dir/bridge.log" 2>&1)
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'install accepted a symlinked runtime directory'
+  [ ! -e "$external/state" ] || fail 'install initialized state through the runtime symlink'
+  [ ! -e "$units/firstmate-codex-telegram-waker.path" ] || fail 'install published a path unit despite unsafe runtime ownership'
+  [ ! -s "$dir/systemctl.log" ] || fail "unsafe runtime ownership reached install lifecycle operations: $(cat "$dir/systemctl.log")"
+  assert_contains "$out" 'requires a non-symlink Codex Telegram waker runtime directory' \
+    'runtime-symlink install refusal did not identify the ownership boundary'
+
+  dir=$(make_case runtime-symlink-uninstall)
+  install_case "$dir"
+  units="$dir/xdg/systemd/user"
+  external="$dir/external-runtime"
+  mv "$dir/home/state/codex-telegram-waker" "$external"
+  ln -s "$external" "$dir/home/state/codex-telegram-waker"
+  : > "$dir/systemctl.log"
+  set +e
+  out=$(run_env "$dir" "$WAKER" uninstall 2>&1)
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'uninstall accepted a symlinked runtime directory'
+  [ -d "$external" ] || fail 'uninstall deleted state through the runtime symlink'
+  [ -f "$units/firstmate-codex-telegram-waker.path" ] || fail 'uninstall removed its path unit despite unsafe runtime ownership'
+  [ -f "$units/firstmate-codex-telegram-waker.service" ] || fail 'uninstall removed its service unit despite unsafe runtime ownership'
+  [ ! -s "$dir/systemctl.log" ] || fail "unsafe runtime ownership reached uninstall lifecycle operations: $(cat "$dir/systemctl.log")"
+  assert_contains "$out" 'requires a non-symlink Codex Telegram waker runtime directory' \
+    'runtime-symlink uninstall refusal did not identify the ownership boundary'
+  pass 'Codex Telegram waker rejects runtime symlinks before lifecycle mutation'
+}
+
 test_busy_pending_and_unknown_defer() {
   local mode dir
   for mode in busy pending unknown unreadable; do
@@ -509,6 +548,7 @@ test_install_uninstall_are_bounded
 test_uninstall_refuses_foreign_unit
 test_uninstall_preserves_files_when_lifecycle_fails
 test_state_symlink_is_rejected_before_uninstall
+test_runtime_symlink_is_rejected_before_lifecycle_mutation
 test_busy_pending_and_unknown_defer
 test_failure_b_retries_until_matching_offered
 test_cursor_and_pending_survive_restart
