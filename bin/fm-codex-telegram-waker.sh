@@ -102,6 +102,13 @@ require_owned_runtime_dir() {  # <canonical-home> <action>
   fi
 }
 
+require_safe_runtime_file() {  # <path> <label>
+  if [ -e "$1" ] || [ -L "$1" ]; then
+    [ -f "$1" ] && [ ! -L "$1" ] \
+      || die "$2 must be a non-symlink regular file"
+  fi
+}
+
 canonical_file() {  # <file>
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
   local dir base
@@ -351,7 +358,7 @@ LOCK_PANE=
 
 bind_primary() {
   local lock="$STATE_DIR/.lock" pid identity tty tmux_env pane_path pane_dead
-  local line pane pane_tty matches=0 matched=''
+  local line pane pane_tty matches=0 matched='' panes
   [ -f "$lock" ] && [ ! -L "$lock" ] || return 1
   IFS= read -r pid < "$lock" 2>/dev/null || return 1
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
@@ -363,8 +370,9 @@ bind_primary() {
   case "$tty" in /dev/pts/*|/dev/tty*) ;; *) return 1 ;; esac
   tmux_env=$(read_proc_environment "$pid" TMUX) || return 1
   case "$tmux_env" in /*,*,*) ;; *) return 1 ;; esac
-  TMUX=$tmux_env tmux list-panes -a -F '#{pane_id}|#{pane_tty}' 2>/dev/null > "$RUNTIME_DIR/panes.tmp" \
-    || { rm -f "$RUNTIME_DIR/panes.tmp"; return 1; }
+  panes=$(mktemp "$RUNTIME_DIR/panes.tmp.XXXXXX") || return 1
+  TMUX=$tmux_env tmux list-panes -a -F '#{pane_id}|#{pane_tty}' 2>/dev/null > "$panes" \
+    || { rm -f "$panes"; return 1; }
   while IFS= read -r line; do
     pane=${line%%|*}
     pane_tty=${line#*|}
@@ -372,8 +380,8 @@ bind_primary() {
     case "$pane" in %*) ;; *) continue ;; esac
     matches=$((matches + 1))
     matched=$pane
-  done < "$RUNTIME_DIR/panes.tmp"
-  rm -f "$RUNTIME_DIR/panes.tmp"
+  done < "$panes"
+  rm -f "$panes"
   [ "$matches" -eq 1 ] || return 1
   pane_dead=$(TMUX=$tmux_env tmux display-message -p -t "$matched" '#{pane_dead}' 2>/dev/null) || return 1
   [ "$pane_dead" = 0 ] || return 1
@@ -591,6 +599,7 @@ run_service() {  # <bridge-log>
   . "$SCRIPT_DIR/fm-backend.sh"
   # shellcheck source=bin/fm-operational-input.sh
   . "$SCRIPT_DIR/fm-operational-input.sh"
+  require_safe_runtime_file "$RUN_LOCK" 'singleton lock'
   exec 9> "$RUN_LOCK" || die "cannot open singleton lock: $RUN_LOCK"
   if ! flock -n 9; then
     log 'another identity-bound waker already holds the singleton lock'

@@ -392,6 +392,34 @@ test_runtime_symlink_is_rejected_before_lifecycle_mutation() {
   pass 'Codex Telegram waker rejects runtime symlinks before lifecycle mutation'
 }
 
+test_runtime_child_symlinks_cannot_escape_writes() {
+  local dir runtime target out status
+  dir=$(make_case runtime-child-symlink)
+  install_case "$dir"
+  runtime="$dir/home/state/codex-telegram-waker"
+  target="$dir/outside-lock-target"
+  printf 'preserve-lock\n' > "$target"
+  ln -s "$target" "$runtime/run.lock"
+  set +e
+  out=$(run_case "$dir" 2>&1)
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'run accepted a symlinked singleton lock'
+  [ "$(cat "$target")" = preserve-lock ] || fail 'run truncated a file through the singleton-lock symlink'
+  assert_contains "$out" 'singleton lock must be a non-symlink regular file' \
+    'singleton-lock symlink refusal was not explicit'
+
+  rm -f "$runtime/run.lock"
+  target="$dir/outside-panes-target"
+  printf 'preserve-panes\n' > "$target"
+  ln -s "$target" "$runtime/panes.tmp"
+  printf '2026-08-14T00:00:00Z queued tg-safe-temp\n' >> "$dir/bridge.log"
+  run_case "$dir" >/dev/null 2>&1 || fail 'run failed when a legacy panes.tmp symlink existed'
+  [ "$(cat "$target")" = preserve-panes ] || fail 'run truncated a file through the panes temporary symlink'
+  [ "$(literal_count "$dir")" -eq 1 ] || fail 'safe unique temporary pane discovery did not deliver the queued request'
+  pass 'Codex Telegram waker child writes never follow runtime symlinks'
+}
+
 test_busy_pending_and_unknown_defer() {
   local mode dir
   for mode in busy pending unknown unreadable; do
@@ -595,6 +623,7 @@ test_uninstall_preserves_files_when_lifecycle_fails
 test_uninstall_reports_removal_failures
 test_state_symlink_is_rejected_before_uninstall
 test_runtime_symlink_is_rejected_before_lifecycle_mutation
+test_runtime_child_symlinks_cannot_escape_writes
 test_busy_pending_and_unknown_defer
 test_failure_b_retries_until_matching_offered
 test_cursor_and_pending_survive_restart
