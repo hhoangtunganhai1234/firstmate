@@ -35,8 +35,10 @@ case "$*" in
   '--user stop firstmate-codex-telegram-waker.service')
     exit "${FM_FAKE_STOP_STATUS:-0}"
     ;;
-  '--user is-active --quiet firstmate-codex-telegram-waker.service')
-    exit "${FM_FAKE_ACTIVE_STATUS:-3}"
+  '--user show --property=ActiveState --value firstmate-codex-telegram-waker.service')
+    [ "${FM_FAKE_ACTIVE_QUERY_STATUS:-0}" -eq 0 ] || exit "$FM_FAKE_ACTIVE_QUERY_STATUS"
+    printf '%s\n' "${FM_FAKE_ACTIVE_STATE:-inactive}"
+    exit 0
     ;;
 esac
 exit 0
@@ -261,7 +263,7 @@ test_uninstall_refuses_foreign_unit() {
 
 test_uninstall_preserves_files_when_lifecycle_fails() {
   local dir units out status mode
-  for mode in disable stop active; do
+  for mode in disable stop active query; do
     dir=$(make_case "uninstall-$mode-failure")
     install_case "$dir"
     units="$dir/xdg/systemd/user"
@@ -269,7 +271,8 @@ test_uninstall_preserves_files_when_lifecycle_fails() {
     case "$mode" in
       disable) out=$(run_env "$dir" env FM_FAKE_DISABLE_STATUS=1 "$WAKER" uninstall 2>&1) ;;
       stop) out=$(run_env "$dir" env FM_FAKE_STOP_STATUS=1 "$WAKER" uninstall 2>&1) ;;
-      active) out=$(run_env "$dir" env FM_FAKE_ACTIVE_STATUS=0 "$WAKER" uninstall 2>&1) ;;
+      active) out=$(run_env "$dir" env FM_FAKE_ACTIVE_STATE=active "$WAKER" uninstall 2>&1) ;;
+      query) out=$(run_env "$dir" env FM_FAKE_ACTIVE_QUERY_STATUS=1 "$WAKER" uninstall 2>&1) ;;
     esac
     status=$?
     set -e
@@ -280,6 +283,29 @@ test_uninstall_preserves_files_when_lifecycle_fails() {
     assert_contains "$out" 'no files were removed' "$mode lifecycle refusal did not promise preservation"
   done
   pass 'Codex Telegram waker uninstall preserves units and state unless shutdown is proven'
+}
+
+test_state_symlink_is_rejected_before_uninstall() {
+  local dir units external out status
+  dir=$(make_case state-symlink)
+  install_case "$dir"
+  units="$dir/xdg/systemd/user"
+  external="$dir/external-state"
+  mv "$dir/home/state" "$external"
+  ln -s "$external" "$dir/home/state"
+  : > "$dir/systemctl.log"
+  set +e
+  out=$(run_env "$dir" "$WAKER" uninstall 2>&1)
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'uninstall accepted a symlinked FM_HOME/state directory'
+  [ -d "$external/codex-telegram-waker" ] || fail 'uninstall deleted runtime state through the state symlink'
+  [ -f "$units/firstmate-codex-telegram-waker.path" ] || fail 'uninstall removed its path unit despite unsafe state ownership'
+  [ -f "$units/firstmate-codex-telegram-waker.service" ] || fail 'uninstall removed its service unit despite unsafe state ownership'
+  [ ! -s "$dir/systemctl.log" ] || fail "unsafe state ownership reached systemd lifecycle operations: $(cat "$dir/systemctl.log")"
+  assert_contains "$out" 'requires a non-symlink FM_HOME/state directory' \
+    'state-symlink refusal did not identify the ownership boundary'
+  pass 'Codex Telegram waker rejects state symlinks before lifecycle mutation'
 }
 
 test_busy_pending_and_unknown_defer() {
@@ -482,6 +508,7 @@ test_liveness_requires_proc_and_advancing_beat() {
 test_install_uninstall_are_bounded
 test_uninstall_refuses_foreign_unit
 test_uninstall_preserves_files_when_lifecycle_fails
+test_state_symlink_is_rejected_before_uninstall
 test_busy_pending_and_unknown_defer
 test_failure_b_retries_until_matching_offered
 test_cursor_and_pending_survive_restart

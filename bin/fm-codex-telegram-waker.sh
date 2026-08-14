@@ -75,6 +75,18 @@ canonical_dir() {  # <directory>
   (cd "$1" 2>/dev/null && pwd -P)
 }
 
+require_standard_state_dir() {  # <canonical-home> <action>
+  local home=$1 action=$2 state
+  [ "$STATE_DIR" = "$home/state" ] \
+    || die "$action requires the standard FM_HOME/state directory"
+  [ ! -L "$STATE_DIR" ] \
+    || die "$action requires a non-symlink FM_HOME/state directory"
+  state=$(canonical_dir "$STATE_DIR") \
+    || die "$action requires an existing FM_HOME/state directory"
+  [ "$state" = "$home/state" ] \
+    || die "$action requires FM_HOME/state to resolve inside FM_HOME"
+}
+
 canonical_file() {  # <file>
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
   local dir base
@@ -226,7 +238,7 @@ install_units() {  # <bridge-log>
     || die "bridge log must be an existing non-symlink regular file: $bridge_log"
   home=$(canonical_dir "$FM_HOME") || die "FM_HOME is not an existing directory: $FM_HOME"
   [ "$FM_HOME" = "$home" ] || die 'FM_HOME must be an absolute canonical directory'
-  [ "$STATE_DIR" = "$home/state" ] || die 'install requires the standard FM_HOME/state directory'
+  require_standard_state_dir "$home" install
   script=$(canonical_file "$0") || die "cannot resolve the tracked waker script: $0"
   reject_unsafe_value bridge-log "$bridge_log"
   reject_unsafe_value FM_HOME "$home"
@@ -255,10 +267,10 @@ install_units() {  # <bridge-log>
 uninstall_units() {
   require_linux
   command -v systemctl >/dev/null 2>&1 || die 'systemctl is required'
-  local home units service_path path_path existing
+  local home units service_path path_path existing active_state
   home=$(canonical_dir "$FM_HOME") || die "FM_HOME is not an existing directory: $FM_HOME"
   [ "$FM_HOME" = "$home" ] || die 'FM_HOME must be an absolute canonical directory'
-  [ "$STATE_DIR" = "$home/state" ] || die 'uninstall requires the standard FM_HOME/state directory'
+  require_standard_state_dir "$home" uninstall
   units=$(unit_dir)
   service_path="$units/$SERVICE_UNIT"
   path_path="$units/$PATH_UNIT"
@@ -272,9 +284,10 @@ uninstall_units() {
     || die "could not disable and stop $PATH_UNIT; no files were removed"
   systemctl --user stop "$SERVICE_UNIT" >/dev/null 2>&1 \
     || die "could not stop $SERVICE_UNIT; no files were removed"
-  if systemctl --user is-active --quiet "$SERVICE_UNIT"; then
-    die "$SERVICE_UNIT remains active; no files were removed"
-  fi
+  active_state=$(systemctl --user show --property=ActiveState --value "$SERVICE_UNIT" 2>/dev/null) \
+    || die "could not confirm $SERVICE_UNIT is inactive; no files were removed"
+  [ "$active_state" = inactive ] \
+    || die "$SERVICE_UNIT has ActiveState=$active_state; no files were removed"
   rm -f -- "$service_path" "$path_path"
   case "$RUNTIME_DIR" in
     "$home/state/codex-telegram-waker") rm -rf -- "$RUNTIME_DIR" ;;
@@ -537,9 +550,12 @@ run_service() {  # <bridge-log>
   require_linux
   command -v flock >/dev/null 2>&1 || die 'flock is required'
   command -v tmux >/dev/null 2>&1 || die 'tmux is required'
-  local bridge_log=$1 poll retry max_loops loops=0 now due result
+  local bridge_log=$1 poll retry max_loops loops=0 now due result home
   bridge_log=$(canonical_file "$bridge_log") \
     || die "bridge log must be an existing non-symlink regular file: $bridge_log"
+  home=$(canonical_dir "$FM_HOME") || die "FM_HOME is not an existing directory: $FM_HOME"
+  [ "$FM_HOME" = "$home" ] || die 'FM_HOME must be an absolute canonical directory'
+  require_standard_state_dir "$home" run
   mkdir -p "$RUNTIME_DIR" || die "cannot create runtime directory: $RUNTIME_DIR"
   chmod 700 "$RUNTIME_DIR" || die "cannot protect runtime directory: $RUNTIME_DIR"
   initialize_state "$bridge_log" || die 'could not initialize private cursor state'
