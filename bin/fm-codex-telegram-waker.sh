@@ -43,7 +43,6 @@ RUNTIME_DIR="$STATE_DIR/codex-telegram-waker"
 STATE_FILE="$RUNTIME_DIR/state"
 BEAT_FILE="$RUNTIME_DIR/beat"
 BOUND_FILE="$RUNTIME_DIR/bound"
-RUN_LOCK="$RUNTIME_DIR/run.lock"
 UNIT_BASENAME=firstmate-codex-telegram-waker
 SERVICE_UNIT="$UNIT_BASENAME.service"
 PATH_UNIT="$UNIT_BASENAME.path"
@@ -99,13 +98,6 @@ require_owned_runtime_dir() {  # <canonical-home> <action>
       || die "$action requires the waker runtime path to be a directory"
     [ "$runtime" = "$expected" ] \
       || die "$action requires the waker runtime directory to resolve inside FM_HOME/state"
-  fi
-}
-
-require_safe_runtime_file() {  # <path> <label>
-  if [ -e "$1" ] || [ -L "$1" ]; then
-    [ -f "$1" ] && [ ! -L "$1" ] \
-      || die "$2 must be a non-symlink regular file"
   fi
 }
 
@@ -599,8 +591,7 @@ run_service() {  # <bridge-log>
   . "$SCRIPT_DIR/fm-backend.sh"
   # shellcheck source=bin/fm-operational-input.sh
   . "$SCRIPT_DIR/fm-operational-input.sh"
-  require_safe_runtime_file "$RUN_LOCK" 'singleton lock'
-  exec 9> "$RUN_LOCK" || die "cannot open singleton lock: $RUN_LOCK"
+  exec 9< "$RUNTIME_DIR" || die "cannot open singleton lock directory: $RUNTIME_DIR"
   if ! flock -n 9; then
     log 'another identity-bound waker already holds the singleton lock'
     return 0

@@ -393,30 +393,27 @@ test_runtime_symlink_is_rejected_before_lifecycle_mutation() {
 }
 
 test_runtime_child_symlinks_cannot_escape_writes() {
-  local dir runtime target out status
+  local dir runtime lock_target panes_target
   dir=$(make_case runtime-child-symlink)
   install_case "$dir"
   runtime="$dir/home/state/codex-telegram-waker"
-  target="$dir/outside-lock-target"
-  printf 'preserve-lock\n' > "$target"
-  ln -s "$target" "$runtime/run.lock"
-  set +e
-  out=$(run_case "$dir" 2>&1)
-  status=$?
-  set -e
-  [ "$status" -ne 0 ] || fail 'run accepted a symlinked singleton lock'
-  [ "$(cat "$target")" = preserve-lock ] || fail 'run truncated a file through the singleton-lock symlink'
-  assert_contains "$out" 'singleton lock must be a non-symlink regular file' \
-    'singleton-lock symlink refusal was not explicit'
+  lock_target="$dir/outside-lock-target"
+  panes_target="$dir/outside-panes-target"
+  printf 'preserve-lock\n' > "$lock_target"
+  printf 'preserve-panes\n' > "$panes_target"
+  ln -s "$lock_target" "$runtime/run.lock"
+  ln -s "$panes_target" "$runtime/panes.tmp"
+  printf '2026-08-14T00:00:00Z queued tg-safe-temp\n' >> "$dir/bridge.log"
+  run_case "$dir" >/dev/null 2>&1 || fail 'run failed with unrelated legacy runtime child links'
+  [ "$(cat "$lock_target")" = preserve-lock ] || fail 'run truncated a file through the legacy singleton-lock symlink'
+  [ "$(cat "$panes_target")" = preserve-panes ] || fail 'run truncated a file through the panes temporary symlink'
+  [ "$(literal_count "$dir")" -eq 1 ] || fail 'safe unique temporary pane discovery did not deliver the queued request'
 
   rm -f "$runtime/run.lock"
-  target="$dir/outside-panes-target"
-  printf 'preserve-panes\n' > "$target"
-  ln -s "$target" "$runtime/panes.tmp"
-  printf '2026-08-14T00:00:00Z queued tg-safe-temp\n' >> "$dir/bridge.log"
-  run_case "$dir" >/dev/null 2>&1 || fail 'run failed when a legacy panes.tmp symlink existed'
-  [ "$(cat "$target")" = preserve-panes ] || fail 'run truncated a file through the panes temporary symlink'
-  [ "$(literal_count "$dir")" -eq 1 ] || fail 'safe unique temporary pane discovery did not deliver the queued request'
+  ln "$lock_target" "$runtime/run.lock"
+  run_case "$dir" >/dev/null 2>&1 || fail 'run failed with an unrelated legacy runtime child hard link'
+  [ "$(cat "$lock_target")" = preserve-lock ] || fail 'run truncated a file through the legacy singleton-lock hard link'
+  [ "$(literal_count "$dir")" -eq 2 ] || fail 'directory-locked retry did not deliver the pending request'
   pass 'Codex Telegram waker child writes never follow runtime symlinks'
 }
 

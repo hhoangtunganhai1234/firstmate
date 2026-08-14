@@ -54,7 +54,7 @@ Only a confirmed-empty Codex composer receives the fixed `watcher` operational i
 The request remains pending after a confirmed submit and is retried until its matching `offered <request-id>` record appears.
 A different request's `offered` record cannot clear it.
 
-The path and service units provide the user-systemd singleton, and `state/codex-telegram-waker/run.lock` provides a second portable single-process boundary.
+The path and service units provide the user-systemd singleton, and a read-only lock on `state/codex-telegram-waker/` provides a second portable single-process boundary without creating a writable lock file.
 The service exits cleanly when the bound primary process dies, changes identity, changes tty, loses its exact pane, leaves the exact home, or no longer owns `state/.lock`.
 
 ## Liveness
