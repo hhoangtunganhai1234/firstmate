@@ -268,8 +268,13 @@ uninstall_units() {
         || die "refusing to remove foreign or differently bound unit: $existing"
     fi
   done
-  systemctl --user disable --now "$PATH_UNIT" >/dev/null 2>&1 || true
-  systemctl --user stop "$SERVICE_UNIT" >/dev/null 2>&1 || true
+  systemctl --user disable --now "$PATH_UNIT" >/dev/null 2>&1 \
+    || die "could not disable and stop $PATH_UNIT; no files were removed"
+  systemctl --user stop "$SERVICE_UNIT" >/dev/null 2>&1 \
+    || die "could not stop $SERVICE_UNIT; no files were removed"
+  if systemctl --user is-active --quiet "$SERVICE_UNIT"; then
+    die "$SERVICE_UNIT remains active; no files were removed"
+  fi
   rm -f -- "$service_path" "$path_path"
   case "$RUNTIME_DIR" in
     "$home/state/codex-telegram-waker") rm -rf -- "$RUNTIME_DIR" ;;
@@ -519,6 +524,7 @@ inject_request() {  # <request-id> <now>
   fm_operational_input_encode watcher "$body" message || return 1
   retries=${FM_CODEX_TELEGRAM_WAKER_CONFIRM_RETRIES:-3}
   sleep_s=${FM_CODEX_TELEGRAM_WAKER_CONFIRM_SLEEP:-0.2}
+  binding_alive || return 2
   verdict=$(fm_backend_send_text_submit tmux "$LOCK_PANE" "$message" "$retries" "$sleep_s" "$sleep_s")
   if [ "$verdict" = empty ]; then
     log "nudged $id; awaiting matching offered record"
@@ -531,7 +537,7 @@ run_service() {  # <bridge-log>
   require_linux
   command -v flock >/dev/null 2>&1 || die 'flock is required'
   command -v tmux >/dev/null 2>&1 || die 'tmux is required'
-  local bridge_log=$1 poll retry max_loops loops=0 now due
+  local bridge_log=$1 poll retry max_loops loops=0 now due result
   bridge_log=$(canonical_file "$bridge_log") \
     || die "bridge log must be an existing non-symlink regular file: $bridge_log"
   mkdir -p "$RUNTIME_DIR" || die "cannot create runtime directory: $RUNTIME_DIR"
@@ -572,7 +578,15 @@ run_service() {  # <bridge-log>
     fold_bridge_log "$bridge_log" || die 'bridge log rotated, shrank, changed identity, or became unreadable'
     now=$(date +%s)
     if due=$(select_due_request "$now" "$retry"); then
-      inject_request "$due" "$now" || die "could not persist retry state for $due"
+      inject_request "$due" "$now"
+      result=$?
+      if [ "$result" -ne 0 ]; then
+        if [ "$result" -eq 2 ]; then
+          log 'bound primary session ended or changed identity before delivery; exiting cleanly'
+          return 0
+        fi
+        die "could not persist retry state for $due"
+      fi
     fi
     if [ "$max_loops" -gt 0 ] && [ "$loops" -ge "$max_loops" ]; then
       return 0

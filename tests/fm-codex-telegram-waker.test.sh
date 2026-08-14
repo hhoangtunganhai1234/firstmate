@@ -24,10 +24,21 @@ trap cleanup EXIT INT TERM
 make_fake_tools() {  # <case-dir>
   local dir=$1 fakebin="$1/fakebin" tool
   mkdir -p "$fakebin"
-  cat > "$fakebin/systemctl" <<'SH'
+cat > "$fakebin/systemctl" <<'SH'
 #!/usr/bin/env bash
 set -u
 printf '%s\n' "$*" >> "${FM_FAKE_SYSTEMCTL_LOG:?}"
+case "$*" in
+  '--user disable --now firstmate-codex-telegram-waker.path')
+    exit "${FM_FAKE_DISABLE_STATUS:-0}"
+    ;;
+  '--user stop firstmate-codex-telegram-waker.service')
+    exit "${FM_FAKE_STOP_STATUS:-0}"
+    ;;
+  '--user is-active --quiet firstmate-codex-telegram-waker.service')
+    exit "${FM_FAKE_ACTIVE_STATUS:-3}"
+    ;;
+esac
 exit 0
 SH
   cat > "$fakebin/ps" <<'SH'
@@ -64,7 +75,12 @@ case "${1:-}" in
   capture-pane)
     mode=$(cat "${FM_FAKE_COMPOSER_MODE:?}")
     case "$mode" in
-      empty) printf '›\n' ;;
+      empty)
+        printf '›\n'
+        if [ "${FM_FAKE_DROP_BINDING_AFTER_COMPOSER:-0}" = 1 ]; then
+          rm -rf -- "${FM_PROC_ROOT_OVERRIDE:?}/${FM_FAKE_PRIMARY_PID:?}"
+        fi
+        ;;
       busy) printf 'esc to interrupt\n' ;;
       pending) printf '› captain draft\n' ;;
       unknown) printf '$ shell\n' ;;
@@ -243,6 +259,29 @@ test_uninstall_refuses_foreign_unit() {
   pass 'Codex Telegram waker uninstall refuses foreign unit ownership'
 }
 
+test_uninstall_preserves_files_when_lifecycle_fails() {
+  local dir units out status mode
+  for mode in disable stop active; do
+    dir=$(make_case "uninstall-$mode-failure")
+    install_case "$dir"
+    units="$dir/xdg/systemd/user"
+    set +e
+    case "$mode" in
+      disable) out=$(run_env "$dir" env FM_FAKE_DISABLE_STATUS=1 "$WAKER" uninstall 2>&1) ;;
+      stop) out=$(run_env "$dir" env FM_FAKE_STOP_STATUS=1 "$WAKER" uninstall 2>&1) ;;
+      active) out=$(run_env "$dir" env FM_FAKE_ACTIVE_STATUS=0 "$WAKER" uninstall 2>&1) ;;
+    esac
+    status=$?
+    set -e
+    [ "$status" -ne 0 ] || fail "uninstall accepted a $mode lifecycle failure"
+    [ -f "$units/firstmate-codex-telegram-waker.path" ] || fail "uninstall removed its path unit after a $mode lifecycle failure"
+    [ -f "$units/firstmate-codex-telegram-waker.service" ] || fail "uninstall removed its service unit after a $mode lifecycle failure"
+    [ -d "$dir/home/state/codex-telegram-waker" ] || fail "uninstall removed runtime state after a $mode lifecycle failure"
+    assert_contains "$out" 'no files were removed' "$mode lifecycle refusal did not promise preservation"
+  done
+  pass 'Codex Telegram waker uninstall preserves units and state unless shutdown is proven'
+}
+
 test_busy_pending_and_unknown_defer() {
   local mode dir
   for mode in busy pending unknown unreadable; do
@@ -342,6 +381,22 @@ test_pid_reuse_and_log_replacement_fail_closed() {
   pass 'PID reuse and append-only bridge-log identity replacement both fail closed'
 }
 
+test_binding_change_at_delivery_boundary_fails_closed() {
+  local dir out status
+  dir=$(make_case delivery-binding-change)
+  install_case "$dir"
+  printf '2026-08-14T00:00:00Z queued tg-delivery-boundary\n' >> "$dir/bridge.log"
+  set +e
+  out=$(run_case "$dir" FM_FAKE_DROP_BINDING_AFTER_COMPOSER=1 2>&1)
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail "delivery-boundary identity change returned $status: $out"
+  assert_contains "$out" 'changed identity before delivery; exiting cleanly' \
+    'delivery-boundary identity change was not reported'
+  [ "$(literal_count "$dir")" -eq 0 ] || fail 'delivery-boundary identity change permitted an injection'
+  pass 'Codex binding is revalidated immediately before delivery'
+}
+
 test_singleton_and_ambiguous_binding_fail_closed() {
   local dir out status
   dir=$(make_case singleton)
@@ -426,11 +481,13 @@ test_liveness_requires_proc_and_advancing_beat() {
 
 test_install_uninstall_are_bounded
 test_uninstall_refuses_foreign_unit
+test_uninstall_preserves_files_when_lifecycle_fails
 test_busy_pending_and_unknown_defer
 test_failure_b_retries_until_matching_offered
 test_cursor_and_pending_survive_restart
 test_session_death_exits_cleanly
 test_pid_reuse_and_log_replacement_fail_closed
+test_binding_change_at_delivery_boundary_fails_closed
 test_singleton_and_ambiguous_binding_fail_closed
 test_non_codex_and_wrong_path_are_not_applicable
 test_liveness_requires_proc_and_advancing_beat
