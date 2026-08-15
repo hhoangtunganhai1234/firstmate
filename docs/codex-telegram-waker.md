@@ -42,7 +42,7 @@ Its systemd sandbox records the exact inherited tmux control socket without gran
 
 ## Runtime contract
 
-At startup the service requires the lock PID to exist under `/proc`, verifies its process identity and exact Codex executable shape, reads that process's controlling tty and inherited tmux socket, and requires exactly one matching live pane.
+At startup the service requires the lock PID to exist under `/proc`, verifies its process identity and exact Codex executable shape, reads that process's controlling tty, and uses the socket path recorded at installation to require exactly one matching live pane.
 It also requires that pane's current path to resolve to the exact `FM_HOME`.
 It exits without typing when any of those facts is missing, changed, dead, or ambiguous.
 
