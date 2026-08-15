@@ -21,8 +21,8 @@
 #   fm-codex-telegram-waker.sh run --bridge-log <absolute-path>
 #   fm-codex-telegram-waker.sh status
 #
-# `install` verifies the current identity-safe primary, grants the generated
-# service only that primary's tmux socket directory, atomically writes exactly
+# `install` verifies the current identity-safe primary, records that primary's
+# exact tmux socket path, atomically writes exactly
 # these user units, initializes the private cursor at the current end of the
 # bridge log, reloads user systemd, and enables the path unit:
 #   firstmate-codex-telegram-waker.path
@@ -50,6 +50,7 @@ PATH_UNIT="$UNIT_BASENAME.path"
 MANAGED_MARKER='# Managed by fm-codex-telegram-waker.sh v1'
 PROC_ROOT="${FM_PROC_ROOT_OVERRIDE:-/proc}"
 WAKER_PID=${BASHPID:-$$}
+RECORDED_TMUX_SOCKET=${FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET:-}
 
 die() {
   printf 'fm-codex-telegram-waker: %s\n' "$*" >&2
@@ -111,9 +112,10 @@ canonical_file() {  # <file>
 }
 
 reject_unsafe_value() {  # <label> <value>
-  case "$2" in
-    ''|*$'\n'*|*$'\r'*) die "$1 must be a non-empty single-line value" ;;
-  esac
+  [ -n "$2" ] || die "$1 must be a non-empty value"
+  if [[ $2 == *[$'\001'-$'\037'$'\177']* ]]; then
+    die "$1 must not contain control characters"
+  fi
 }
 
 atomic_write() {  # <path>, content on stdin
@@ -195,14 +197,14 @@ state_matches_log() {  # <bridge-log>
     && [ "$size" -ge "$CURSOR_OFFSET" ]
 }
 
-render_service_unit() {  # <script> <home> <bridge-log> <tmux-socket-directory>
-  local script=$1 home=$2 bridge_log=$3 tmux_socket_dir=$4
-  local q_script q_home q_log writable socket_access
+render_service_unit() {  # <script> <home> <bridge-log> <tmux-socket>
+  local script=$1 home=$2 bridge_log=$3 tmux_socket=$4
+  local q_script q_home q_log q_socket writable
   q_script=$(systemd_quote "$script")
   q_home=$(systemd_quote "FM_HOME=$home")
   q_log=$(systemd_quote "$bridge_log")
   writable=$(systemd_path_value "$RUNTIME_DIR")
-  socket_access=$(systemd_path_value "$tmux_socket_dir")
+  q_socket=$(systemd_quote "FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET=$tmux_socket")
   printf '%s\n' "$MANAGED_MARKER"
   printf '# FM_HOME=%s\n' "$home"
   cat <<EOF
@@ -213,13 +215,13 @@ Documentation=file:$FM_ROOT/docs/codex-telegram-waker.md
 [Service]
 Type=simple
 Environment=$q_home
+Environment=$q_socket
 ExecStart=$q_script run --bridge-log $q_log
 Restart=no
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=$writable
-ReadWritePaths=$socket_access
 RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
 LockPersonality=yes
@@ -236,15 +238,16 @@ load_primary_binding_libraries() {
   . "$SCRIPT_DIR/fm-backend.sh"
 }
 
-bound_tmux_socket_directory() {  # stdout: the exact socket directory from the bound primary
-  local socket socket_dir
+bound_tmux_socket() {  # stdout: the exact socket path from the bound primary
+  local socket
   socket=${LOCK_TMUX%%,*}
   case "$socket" in
     /*) ;;
     *) return 1 ;;
   esac
-  socket_dir=$(canonical_dir "$(dirname "$socket")") || return 1
-  printf '%s\n' "$socket_dir"
+  reject_unsafe_value tmux-socket "$socket"
+  canonical_dir "$(dirname "$socket")" >/dev/null || return 1
+  printf '%s\n' "$socket"
 }
 
 render_path_unit() {  # <home>
@@ -271,7 +274,7 @@ install_units() {  # <bridge-log>
   require_linux
   command -v systemctl >/dev/null 2>&1 || die 'systemctl is required'
   command -v flock >/dev/null 2>&1 || die 'flock is required'
-  local bridge_log=$1 home script units service_path path_path existing tmux_socket_dir
+  local bridge_log=$1 home script units service_path path_path existing tmux_socket
   bridge_log=$(canonical_file "$bridge_log") \
     || die "bridge log must be an existing non-symlink regular file: $bridge_log"
   home=$(canonical_dir "$FM_HOME") || die "FM_HOME is not an existing directory: $FM_HOME"
@@ -295,13 +298,13 @@ install_units() {  # <bridge-log>
   load_primary_binding_libraries
   bind_primary \
     || die 'install requires one unique identity-safe tmux Codex primary matching the current session lock'
-  tmux_socket_dir=$(bound_tmux_socket_directory) \
-    || die 'install requires a usable directory for the bound tmux control socket'
+  tmux_socket=$(bound_tmux_socket) \
+    || die 'install requires a usable absolute path for the bound tmux control socket'
   initialize_state "$bridge_log" || die 'could not initialize private cursor state'
   state_matches_log "$bridge_log" \
     || die 'existing private cursor does not match this append-only bridge log; uninstall before rebinding'
   mkdir -p "$units" || die "could not create user unit directory: $units"
-  render_service_unit "$script" "$home" "$bridge_log" "$tmux_socket_dir" | atomic_write "$service_path" \
+  render_service_unit "$script" "$home" "$bridge_log" "$tmux_socket" | atomic_write "$service_path" \
     || die "could not publish $service_path"
   render_path_unit "$home" | atomic_write "$path_path" \
     || die "could not publish $path_path"
@@ -366,9 +369,9 @@ codex_pid_exact() {  # <pid>
 read_proc_environment() {  # <pid> <name>
   local pid=$1 name=$2 line found=''
   [ -r "$PROC_ROOT/$pid/environ" ] || return 1
-  while IFS= read -r line; do
+  while IFS= read -r -d '' line; do
     case "$line" in "$name="*) found=${line#*=} ;; esac
-  done < <(tr '\0' '\n' < "$PROC_ROOT/$pid/environ")
+  done < "$PROC_ROOT/$pid/environ"
   [ -n "$found" ] || return 1
   printf '%s\n' "$found"
 }
@@ -379,8 +382,8 @@ LOCK_TTY=
 LOCK_TMUX=
 LOCK_PANE=
 
-bind_primary() {
-  local lock="$STATE_DIR/.lock" pid identity tty tmux_env pane_path pane_dead
+bind_primary() {  # [recorded-tmux-socket]
+  local recorded_socket=${1:-} lock="$STATE_DIR/.lock" pid identity tty tmux_env pane_path pane_dead
   local line pane pane_tty matches=0 matched='' panes
   [ -f "$lock" ] && [ ! -L "$lock" ] || return 1
   IFS= read -r pid < "$lock" 2>/dev/null || return 1
@@ -389,9 +392,18 @@ bind_primary() {
   fm_pid_alive "$pid" || return 1
   identity=$(fm_pid_identity "$pid") || return 1
   codex_pid_exact "$pid" || return 1
-  tty=$(readlink "$PROC_ROOT/$pid/fd/0" 2>/dev/null) || return 1
+  tty=$(ps -p "$pid" -o tty= 2>/dev/null) || return 1
+  tty=${tty//[[:space:]]/}
+  [ -n "$tty" ] && [ "$tty" != '?' ] || return 1
+  case "$tty" in /dev/*) ;; *) tty="/dev/$tty" ;; esac
   case "$tty" in /dev/pts/*|/dev/tty*) ;; *) return 1 ;; esac
-  tmux_env=$(read_proc_environment "$pid" TMUX) || return 1
+  if [ -n "$recorded_socket" ]; then
+    reject_unsafe_value tmux-socket "$recorded_socket"
+    case "$recorded_socket" in /*) ;; *) return 1 ;; esac
+    tmux_env="$recorded_socket,0,0"
+  else
+    tmux_env=$(read_proc_environment "$pid" TMUX) || return 1
+  fi
   case "$tmux_env" in /*,*,*) ;; *) return 1 ;; esac
   panes=$(mktemp "$RUNTIME_DIR/panes.tmp.XXXXXX") || return 1
   TMUX=$tmux_env tmux list-panes -a -F '#{pane_id}|#{pane_tty}' 2>/dev/null > "$panes" \
@@ -428,7 +440,9 @@ binding_alive() {
   [ "$identity" = "$LOCK_IDENTITY" ] || return 1
   IFS= read -r current_lock < "$STATE_DIR/.lock" 2>/dev/null || return 1
   [ "$current_lock" = "$pid" ] || return 1
-  tty=$(readlink "$PROC_ROOT/$pid/fd/0" 2>/dev/null) || return 1
+  tty=$(ps -p "$pid" -o tty= 2>/dev/null) || return 1
+  tty=${tty//[[:space:]]/}
+  case "$tty" in /dev/*) ;; *) tty="/dev/$tty" ;; esac
   [ "$tty" = "$LOCK_TTY" ] || return 1
   pane_dead=$(tmux display-message -p -t "$LOCK_PANE" '#{pane_dead}' 2>/dev/null) || return 1
   [ "$pane_dead" = 0 ] || return 1
@@ -623,7 +637,8 @@ run_service() {  # <bridge-log>
     return 0
   fi
   load_state || die 'private cursor state is malformed'
-  bind_primary || die 'no unique identity-safe tmux Codex primary matches the current session lock'
+  bind_primary "$RECORDED_TMUX_SOCKET" \
+    || die 'no unique identity-safe tmux Codex primary matches the current session lock and recorded socket'
   fm_backend_source tmux || die 'could not load the verified tmux delivery primitives'
   write_bound_record || die 'could not publish bound-session record'
   trap cleanup_runtime_claim EXIT

@@ -21,6 +21,7 @@ cleanup() {
   if [ -n "$SANDBOX_TMUX_SOCKET" ]; then
     tmux -S "$SANDBOX_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
+  chmod -R u+rwX "$TMP_ROOT" 2>/dev/null || true
   fm_test_cleanup
 }
 trap cleanup EXIT INT TERM
@@ -63,6 +64,7 @@ set -u
 case " $* " in
   *' -o comm= '*) printf '%s\n' "${FM_FAKE_PS_COMM:-codex}" ;;
   *' -o args= '*) printf '%s\n' "${FM_FAKE_PS_ARGS:-codex}" ;;
+  *' -o tty= '*) printf '%s\n' "${FM_FAKE_TTY:-/dev/pts/99}" ;;
   *) exit 1 ;;
 esac
 SH
@@ -260,12 +262,10 @@ test_install_uninstall_are_bounded() {
 }
 
 test_sandboxed_service_can_reach_its_exact_tmux_socket() {
-  local dir escaped_dir socket socket_dir units encoded_socket_dir property out status
-  local -a properties=()
+  local dir escaped_dir socket units out status fakebin
   dir=$(make_case sandboxed-tmux-socket)
   socket="$dir/tmux-socket/control"
-  socket_dir=$(dirname "$socket")
-  mkdir -p "$socket_dir"
+  mkdir -p "$(dirname "$socket")"
   if command -v tmux >/dev/null 2>&1; then
     tmux -S "$socket" new-session -d -s fm-waker-sandbox 'sleep 30' \
       || fail 'could not start the isolated tmux server for the sandbox regression'
@@ -274,51 +274,71 @@ test_sandboxed_service_can_reach_its_exact_tmux_socket() {
   printf 'TMUX=%s,9001,0\0' "$socket" > "$dir/proc/$$/environ"
   install_case "$dir"
   units="$dir/xdg/systemd/user"
-  encoded_socket_dir=${socket_dir//%/%%}
-  encoded_socket_dir=${encoded_socket_dir// /\\x20}
-  grep -Fqx "ReadWritePaths=$encoded_socket_dir" "$units/firstmate-codex-telegram-waker.service" \
-    || fail 'install did not grant the generated service the bound tmux socket directory'
-  if command -v systemd-run >/dev/null 2>&1 && [ -n "$SANDBOX_TMUX_SOCKET" ]; then
-    while IFS= read -r property; do
-      properties+=(--property "$property")
-    done < <(sed -n 's/^ReadWritePaths=/ReadWritePaths=/p' "$units/firstmate-codex-telegram-waker.service")
+  assert_contains "$(cat "$units/firstmate-codex-telegram-waker.service")" \
+    "Environment=\"FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET=$socket\"" \
+    'installed service did not record the exact tmux socket contract'
+  printf '2026-08-15T00:00:00Z queued sandbox-request\n' >> "$dir/bridge.log"
+  chmod 000 "$dir/proc/$$/environ" "$dir/proc/$$/fd"
+  run_case "$dir" "FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET=$socket" >/dev/null 2>&1 \
+    || fail 'recorded socket run could not bind with sandbox-hidden process environment and descriptors'
+  [ "$(literal_count "$dir")" -eq 1 ] \
+    || fail 'recorded socket run did not reach the identity-safe pane'
+  if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user show-environment >/dev/null 2>&1; then
+    fakebin=$(cat "$dir/fakebin.path")
     set +e
     out=$(systemd-run --user --wait --collect --pipe \
       --property ProtectSystem=strict \
       --property ProtectHome=read-only \
+      --property "ReadWritePaths=$dir/home/state/codex-telegram-waker" \
       --property RestrictAddressFamilies=AF_UNIX \
       --property IPAddressDeny=any \
-      "${properties[@]}" \
-      env "TMUX=$socket,9001,0" tmux list-panes -a -F '#{pane_id}' 2>&1)
+      env HOME="$dir/user" XDG_CONFIG_HOME="$dir/xdg" FM_HOME="$dir/home" \
+      FM_STATE_OVERRIDE="$dir/home/state" FM_PROC_ROOT_OVERRIDE="$dir/proc" \
+      FM_FAKE_PRIMARY_PID="$$" FM_FAKE_HOME="$dir/home" FM_FAKE_TTY=/dev/pts/99 \
+      FM_FAKE_SYSTEMCTL_LOG="$dir/systemctl.log" FM_FAKE_TMUX_CALLS="$dir/tmux.log" \
+      FM_FAKE_SEND_LOG="$dir/send.log" FM_FAKE_COMPOSER_MODE="$dir/composer" \
+      FM_FAKE_SLEEP_ONCE="$dir/sleep.once" FM_FAKE_NETWORK_LOG="$NETWORK_LOG" \
+      FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET="$socket" FM_CODEX_TELEGRAM_WAKER_MAX_LOOPS=1 \
+      FM_CODEX_TELEGRAM_WAKER_POLL_SECONDS=0 FM_CODEX_TELEGRAM_WAKER_RETRY_SECONDS=0 \
+      FM_CODEX_TELEGRAM_WAKER_CONFIRM_SLEEP=0 FM_CODEX_TELEGRAM_WAKER_CONFIRM_RETRIES=1 \
+      PATH="$fakebin:$PATH" "$WAKER" run --bridge-log "$dir/bridge.log" 2>&1)
     status=$?
     set -e
-    case "$out" in
-      *'Failed to connect to bus'*|*'No medium found'*|*'status=226/NAMESPACE'*) ;;
-      *)
-        [ "$status" -eq 0 ] || fail "sandboxed tmux control-socket access failed: $out"
-        assert_contains "$out" '%0' 'sandboxed service could not observe the exact tmux pane'
-        ;;
-    esac
+    [ "$status" -eq 0 ] || fail "sandboxed executable waker run failed: $out"
+  else
+    printf 'skip: user systemd unavailable for sandboxed executable waker run\n'
   fi
   tmux -S "$socket" kill-server 2>/dev/null || true
   SANDBOX_TMUX_SOCKET=
 
   escaped_dir=$(make_case escaped-tmux-socket)
   socket="$escaped_dir/tmux socket%scope/control"
-  socket_dir=$(dirname "$socket")
-  mkdir -p "$socket_dir"
+  mkdir -p "$(dirname "$socket")"
   printf 'TMUX=%s,9001,0\0' "$socket" > "$escaped_dir/proc/$$/environ"
   install_case "$escaped_dir"
   units="$escaped_dir/xdg/systemd/user"
-  encoded_socket_dir=${socket_dir//%/%%}
-  encoded_socket_dir=${encoded_socket_dir// /\\x20}
-  grep -Fqx "ReadWritePaths=$encoded_socket_dir" "$units/firstmate-codex-telegram-waker.service" \
-    || fail 'install did not preserve systemd escaping for the bound tmux socket directory'
+  assert_contains "$(cat "$units/firstmate-codex-telegram-waker.service")" \
+    "Environment=\"FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET=${socket//%/%%}\"" \
+    'install did not preserve the exact systemd-escaped tmux socket'
   if command -v systemd-analyze >/dev/null 2>&1; then
     systemd-analyze verify "$units/firstmate-codex-telegram-waker.service" >/dev/null 2>&1 \
       || fail 'systemd rejected the escaped bound tmux socket directory'
   fi
-  pass 'the installed sandbox grants only the bound tmux socket directory, including escaped paths'
+  pass 'the sandboxed executable run uses only the exact recorded tmux socket'
+}
+
+test_install_rejects_unsafe_tmux_socket() {
+  local dir out status
+  dir=$(make_case unsafe-tmux-socket)
+  printf 'TMUX=/tmp/control\nInjected=yes,9001,0\0' > "$dir/proc/$$/environ"
+  set +e
+  out=$(run_env "$dir" "$WAKER" install --bridge-log "$dir/bridge.log" 2>&1)
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'install accepted a tmux socket containing a newline'
+  assert_contains "$out" 'control characters' 'unsafe tmux socket refusal was not explicit'
+  pass 'install rejects control characters in the inherited tmux socket'
 }
 
 test_uninstall_refuses_foreign_unit() {
@@ -682,6 +702,7 @@ test_liveness_requires_proc_and_advancing_beat() {
 
 test_install_uninstall_are_bounded
 test_sandboxed_service_can_reach_its_exact_tmux_socket
+test_install_rejects_unsafe_tmux_socket
 test_uninstall_refuses_foreign_unit
 test_uninstall_preserves_files_when_lifecycle_fails
 test_uninstall_reports_removal_failures

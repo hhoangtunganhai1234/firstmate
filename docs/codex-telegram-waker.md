@@ -38,7 +38,7 @@ If a future primary uses a different tmux socket path, rerun `install` while tha
 
 The service reads the log without modifying it.
 It never invokes `fm-x-poll.sh`, `/connector/poll`, a reply command, or a network client.
-Its systemd sandbox grants write-namespace access only to the containing directory of the exact inherited tmux control socket required for that binding, allows Unix-domain sockets for tmux, and denies IP networking.
+Its systemd sandbox records the exact inherited tmux control socket without granting its containing directory write access, allows Unix-domain sockets for tmux, and denies IP networking.
 
 ## Runtime contract
 
