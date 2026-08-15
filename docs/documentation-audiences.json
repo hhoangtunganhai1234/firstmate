@@ -237,6 +237,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/codex-telegram-waker.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/configuration.md",
       "audience": "operator-current"
     },

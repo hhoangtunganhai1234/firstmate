@@ -169,6 +169,38 @@ The Ahoy first-message boundary was reverified on 2026-07-22 with Pi 0.81.1 and 
 Marked current operational input and the two exact legacy compatibility shapes selected Bearings, while genuine near-miss captain messages remained real boundaries.
 The detailed reconciliation and task chronology stay in the private audit report and PR evidence.
 
+## Codex Telegram waker
+
+The portable regression for the optional external Codex Telegram waker is:
+
+```sh
+bin/fm-test-run.sh tests/fm-codex-telegram-waker.test.sh
+```
+
+The test executes the public installer, run loop, status check, and uninstaller against isolated homes, user-unit directories, process records, and tmux behavior doubles.
+It feeds the real shared composer classifier and verified tmux submit primitive through their public backend dispatch rather than searching source bytes.
+It also asks `systemd-analyze verify` to consume both generated units when that host tool is present.
+
+The regression replays Failure B by withholding every `offered` record after a confirmed injection and proves that the unresolved ID continues to receive retries.
+It then appends an `offered` record for a different ID and proves retries continue before appending the matching `offered` record and proving they stop.
+Separate cases prove busy, pending, unknown, and unreadable composer deferral, partial-line cursor recovery, unresolved-ID recovery across process restarts, PID-reuse rejection, append-only log-identity rejection, session-death cleanup, singleton exclusion, unique tty-to-pane binding, exact home binding, narrow install and uninstall ownership, and the absence of calls to Relay-consumer and network-client executables.
+The liveness case reads the service's current bound PID, verifies `/proc/<pid>` exists, observes two different beat records, and then proves a stopped process plus stale prior evidence cannot satisfy status.
+
+The affected support axes are intentionally asymmetric:
+
+| Axis | Verdict | Evidence boundary |
+| --- | --- | --- |
+| Codex plus tmux | Supported | The session-lock PID must be an exact Codex process, its inherited `TMUX` value selects the server, its controlling tty maps to exactly one pane, and the pane path equals `FM_HOME`. |
+| Claude, OpenCode, Pi, pi-signed, Grok, and Kimi primaries | Not applicable | The executable gate rejects every non-Codex lock owner before tmux discovery or typing. |
+| Muse | Not applicable | Muse is rejected by the executable gate and is not a supported Firstmate primary integration. |
+| Herdr, Zellij, Orca, and cmux | Not applicable | `FM_BACKEND_KNOWN` lists these supported runtime backends, but this waker does not dispatch to them and requires a lock-owner `TMUX` socket plus exact tty-to-pane mapping. |
+| Codex App | Not applicable | Codex App remains absent from `FM_BACKEND_KNOWN` and is not a selectable runtime backend. |
+
+The systemd service has `RestrictAddressFamilies=AF_UNIX` and `IPAddressDeny=any`, so its only allowed socket family is the local tmux transport.
+The behavioral test shadows `fm-x-poll.sh`, connector, curl, wget, nc, ncat, and socat with failing recorders and proves none executes across all lifecycle and runtime cases.
+
+The operator contract, setup, liveness check, and reversible removal path live in [`../codex-telegram-waker.md`](../codex-telegram-waker.md).
+
 ## Semantic busy state
 
 The per-adapter semantic sources behind [`bin/fm-busy-lib.sh`](../../bin/fm-busy-lib.sh) were live-verified on 2026-07-28 against firstmate-launched workers wired exactly as `fm-spawn` writes them.
