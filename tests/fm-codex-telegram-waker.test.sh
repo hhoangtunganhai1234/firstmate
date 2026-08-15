@@ -11,11 +11,15 @@ TMP_ROOT=$(fm_test_tmproot fm-codex-telegram-waker)
 NETWORK_LOG="$TMP_ROOT/network.log"
 : > "$NETWORK_LOG"
 BACKGROUND_PID=
+SANDBOX_TMUX_SOCKET=
 
 cleanup() {
   if [ -n "$BACKGROUND_PID" ]; then
     kill "$BACKGROUND_PID" 2>/dev/null || true
     wait "$BACKGROUND_PID" 2>/dev/null || true
+  fi
+  if [ -n "$SANDBOX_TMUX_SOCKET" ]; then
+    tmux -S "$SANDBOX_TMUX_SOCKET" kill-server 2>/dev/null || true
   fi
   fm_test_cleanup
 }
@@ -253,6 +257,68 @@ test_install_uninstall_are_bounded() {
   after=$(cat "$dir/home/state/keep/sentinel")
   [ "$before" = "$after" ] || fail 'uninstall changed unrelated Firstmate state'
   pass 'Codex Telegram waker install and uninstall remain narrowly bounded and systemd-valid'
+}
+
+test_sandboxed_service_can_reach_its_exact_tmux_socket() {
+  local dir escaped_dir socket socket_dir units encoded_socket_dir property out status
+  local -a properties=()
+  dir=$(make_case sandboxed-tmux-socket)
+  socket="$dir/tmux-socket/control"
+  socket_dir=$(dirname "$socket")
+  mkdir -p "$socket_dir"
+  if command -v tmux >/dev/null 2>&1; then
+    tmux -S "$socket" new-session -d -s fm-waker-sandbox 'sleep 30' \
+      || fail 'could not start the isolated tmux server for the sandbox regression'
+    SANDBOX_TMUX_SOCKET=$socket
+  fi
+  printf 'TMUX=%s,9001,0\0' "$socket" > "$dir/proc/$$/environ"
+  install_case "$dir"
+  units="$dir/xdg/systemd/user"
+  encoded_socket_dir=${socket_dir//%/%%}
+  encoded_socket_dir=${encoded_socket_dir// /\\x20}
+  grep -Fqx "ReadWritePaths=$encoded_socket_dir" "$units/firstmate-codex-telegram-waker.service" \
+    || fail 'install did not grant the generated service the bound tmux socket directory'
+  if command -v systemd-run >/dev/null 2>&1 && [ -n "$SANDBOX_TMUX_SOCKET" ]; then
+    while IFS= read -r property; do
+      properties+=(--property "$property")
+    done < <(sed -n 's/^ReadWritePaths=/ReadWritePaths=/p' "$units/firstmate-codex-telegram-waker.service")
+    set +e
+    out=$(systemd-run --user --wait --collect --pipe \
+      --property ProtectSystem=strict \
+      --property ProtectHome=read-only \
+      --property RestrictAddressFamilies=AF_UNIX \
+      --property IPAddressDeny=any \
+      "${properties[@]}" \
+      env "TMUX=$socket,9001,0" tmux list-panes -a -F '#{pane_id}' 2>&1)
+    status=$?
+    set -e
+    case "$out" in
+      *'Failed to connect to bus'*|*'No medium found'*|*'status=226/NAMESPACE'*) ;;
+      *)
+        [ "$status" -eq 0 ] || fail "sandboxed tmux control-socket access failed: $out"
+        assert_contains "$out" '%0' 'sandboxed service could not observe the exact tmux pane'
+        ;;
+    esac
+  fi
+  tmux -S "$socket" kill-server 2>/dev/null || true
+  SANDBOX_TMUX_SOCKET=
+
+  escaped_dir=$(make_case escaped-tmux-socket)
+  socket="$escaped_dir/tmux socket%scope/control"
+  socket_dir=$(dirname "$socket")
+  mkdir -p "$socket_dir"
+  printf 'TMUX=%s,9001,0\0' "$socket" > "$escaped_dir/proc/$$/environ"
+  install_case "$escaped_dir"
+  units="$escaped_dir/xdg/systemd/user"
+  encoded_socket_dir=${socket_dir//%/%%}
+  encoded_socket_dir=${encoded_socket_dir// /\\x20}
+  grep -Fqx "ReadWritePaths=$encoded_socket_dir" "$units/firstmate-codex-telegram-waker.service" \
+    || fail 'install did not preserve systemd escaping for the bound tmux socket directory'
+  if command -v systemd-analyze >/dev/null 2>&1; then
+    systemd-analyze verify "$units/firstmate-codex-telegram-waker.service" >/dev/null 2>&1 \
+      || fail 'systemd rejected the escaped bound tmux socket directory'
+  fi
+  pass 'the installed sandbox grants only the bound tmux socket directory, including escaped paths'
 }
 
 test_uninstall_refuses_foreign_unit() {
@@ -615,6 +681,7 @@ test_liveness_requires_proc_and_advancing_beat() {
 }
 
 test_install_uninstall_are_bounded
+test_sandboxed_service_can_reach_its_exact_tmux_socket
 test_uninstall_refuses_foreign_unit
 test_uninstall_preserves_files_when_lifecycle_fails
 test_uninstall_reports_removal_failures

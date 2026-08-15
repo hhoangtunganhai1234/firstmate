@@ -21,9 +21,10 @@
 #   fm-codex-telegram-waker.sh run --bridge-log <absolute-path>
 #   fm-codex-telegram-waker.sh status
 #
-# `install` atomically writes exactly these user units, initializes the private
-# cursor at the current end of the bridge log, reloads user systemd, and enables
-# the path unit:
+# `install` verifies the current identity-safe primary, grants the generated
+# service only that primary's tmux socket directory, atomically writes exactly
+# these user units, initializes the private cursor at the current end of the
+# bridge log, reloads user systemd, and enables the path unit:
 #   firstmate-codex-telegram-waker.path
 #   firstmate-codex-telegram-waker.service
 # `uninstall` refuses foreign unit files, stops those exact units, removes them
@@ -194,12 +195,14 @@ state_matches_log() {  # <bridge-log>
     && [ "$size" -ge "$CURSOR_OFFSET" ]
 }
 
-render_service_unit() {  # <script> <home> <bridge-log>
-  local script=$1 home=$2 bridge_log=$3 q_script q_home q_log writable
+render_service_unit() {  # <script> <home> <bridge-log> <tmux-socket-directory>
+  local script=$1 home=$2 bridge_log=$3 tmux_socket_dir=$4
+  local q_script q_home q_log writable socket_access
   q_script=$(systemd_quote "$script")
   q_home=$(systemd_quote "FM_HOME=$home")
   q_log=$(systemd_quote "$bridge_log")
   writable=$(systemd_path_value "$RUNTIME_DIR")
+  socket_access=$(systemd_path_value "$tmux_socket_dir")
   printf '%s\n' "$MANAGED_MARKER"
   printf '# FM_HOME=%s\n' "$home"
   cat <<EOF
@@ -216,11 +219,32 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=$writable
+ReadWritePaths=$socket_access
 RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
 LockPersonality=yes
 
 EOF
+}
+
+load_primary_binding_libraries() {
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  # shellcheck source=bin/fm-session-lock-lib.sh
+  . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+  # shellcheck source=bin/fm-backend.sh
+  . "$SCRIPT_DIR/fm-backend.sh"
+}
+
+bound_tmux_socket_directory() {  # stdout: the exact socket directory from the bound primary
+  local socket socket_dir
+  socket=${LOCK_TMUX%%,*}
+  case "$socket" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  socket_dir=$(canonical_dir "$(dirname "$socket")") || return 1
+  printf '%s\n' "$socket_dir"
 }
 
 render_path_unit() {  # <home>
@@ -247,7 +271,7 @@ install_units() {  # <bridge-log>
   require_linux
   command -v systemctl >/dev/null 2>&1 || die 'systemctl is required'
   command -v flock >/dev/null 2>&1 || die 'flock is required'
-  local bridge_log=$1 home script units service_path path_path existing
+  local bridge_log=$1 home script units service_path path_path existing tmux_socket_dir
   bridge_log=$(canonical_file "$bridge_log") \
     || die "bridge log must be an existing non-symlink regular file: $bridge_log"
   home=$(canonical_dir "$FM_HOME") || die "FM_HOME is not an existing directory: $FM_HOME"
@@ -266,11 +290,18 @@ install_units() {  # <bridge-log>
         || die "refusing to replace foreign or differently bound unit: $existing"
     fi
   done
+  mkdir -p "$RUNTIME_DIR" || die "cannot create runtime directory: $RUNTIME_DIR"
+  chmod 700 "$RUNTIME_DIR" || die "cannot protect runtime directory: $RUNTIME_DIR"
+  load_primary_binding_libraries
+  bind_primary \
+    || die 'install requires one unique identity-safe tmux Codex primary matching the current session lock'
+  tmux_socket_dir=$(bound_tmux_socket_directory) \
+    || die 'install requires a usable directory for the bound tmux control socket'
   initialize_state "$bridge_log" || die 'could not initialize private cursor state'
   state_matches_log "$bridge_log" \
     || die 'existing private cursor does not match this append-only bridge log; uninstall before rebinding'
   mkdir -p "$units" || die "could not create user unit directory: $units"
-  render_service_unit "$script" "$home" "$bridge_log" | atomic_write "$service_path" \
+  render_service_unit "$script" "$home" "$bridge_log" "$tmux_socket_dir" | atomic_write "$service_path" \
     || die "could not publish $service_path"
   render_path_unit "$home" | atomic_write "$path_path" \
     || die "could not publish $path_path"
@@ -583,12 +614,7 @@ run_service() {  # <bridge-log>
   chmod 700 "$RUNTIME_DIR" || die "cannot protect runtime directory: $RUNTIME_DIR"
   initialize_state "$bridge_log" || die 'could not initialize private cursor state'
   # Load the existing identity and delivery owners only on the active run path.
-  # shellcheck source=bin/fm-wake-lib.sh
-  . "$SCRIPT_DIR/fm-wake-lib.sh"
-  # shellcheck source=bin/fm-session-lock-lib.sh
-  . "$SCRIPT_DIR/fm-session-lock-lib.sh"
-  # shellcheck source=bin/fm-backend.sh
-  . "$SCRIPT_DIR/fm-backend.sh"
+  load_primary_binding_libraries
   # shellcheck source=bin/fm-operational-input.sh
   . "$SCRIPT_DIR/fm-operational-input.sh"
   exec 9< "$RUNTIME_DIR" || die "cannot open singleton lock directory: $RUNTIME_DIR"
