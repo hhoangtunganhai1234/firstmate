@@ -11,6 +11,7 @@ The waker deliberately supports one configuration:
 - Linux with user systemd and `/proc`.
 - A Firstmate primary running the Codex harness.
 - That primary running in one uniquely identifiable tmux pane whose current path is the exact `FM_HOME`.
+- A currently locked primary whose inherited tmux control socket is available when the waker is installed.
 - An existing append-only Telegram bridge log containing `queued <request-id>` and `offered <request-id>` records.
 
 The fixed user-unit names intentionally allow only one installed primary-home binding per operating-system user.
@@ -30,17 +31,18 @@ FM_HOME=/absolute/path/to/firstmate \
   --bridge-log /absolute/path/to/firstmate-telegram/bridge.log
 ```
 
-The installer initializes its cursor at the current end of that log, atomically writes `firstmate-codex-telegram-waker.path` and `firstmate-codex-telegram-waker.service` under `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user`, reloads user systemd, and enables the path unit.
-The path unit watches future changes to `state/.lock`, so an already running primary is not guessed or retroactively adopted during installation.
-The next primary lock change starts the service.
+The installer verifies the currently locked primary and records its exact inherited tmux control-socket pathname before atomically writing `firstmate-codex-telegram-waker.path` and `firstmate-codex-telegram-waker.service` under `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user`, reloading user systemd, and enabling the path unit.
+It does not start a service or type into that current primary, so the path unit still watches a future change to `state/.lock`.
+Future primary lock changes on that same socket path start the service.
+If a future primary uses a different tmux socket path, rerun `install` while that primary is locked to replace the owned units with its new exact socket binding.
 
 The service reads the log without modifying it.
 It never invokes `fm-x-poll.sh`, `/connector/poll`, a reply command, or a network client.
-Its systemd sandbox allows Unix-domain sockets for tmux and denies IP networking.
+Its systemd sandbox records the exact inherited tmux control socket without granting its containing directory write access, allows Unix-domain sockets for tmux, and denies IP networking.
 
 ## Runtime contract
 
-At startup the service requires the lock PID to exist under `/proc`, verifies its process identity and exact Codex executable shape, reads that process's controlling tty and inherited tmux socket, and requires exactly one matching live pane.
+At startup the service requires the lock PID to exist under `/proc`, verifies its process identity and exact Codex executable shape, reads that process's controlling tty, and uses the socket path recorded at installation to require exactly one matching live pane.
 It also requires that pane's current path to resolve to the exact `FM_HOME`.
 It exits without typing when any of those facts is missing, changed, dead, or ambiguous.
 
