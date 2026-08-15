@@ -262,30 +262,36 @@ test_install_uninstall_are_bounded() {
 }
 
 test_sandboxed_service_can_reach_its_exact_tmux_socket() {
-  local dir escaped_dir socket units out status fakebin
+  local dir escaped_dir socket units out status fakebin primary_pid real_tmux real_ps real_sleep
   dir=$(make_case sandboxed-tmux-socket)
   socket="$dir/tmux-socket/control"
   mkdir -p "$(dirname "$socket")"
-  if command -v tmux >/dev/null 2>&1; then
-    tmux -S "$socket" new-session -d -s fm-waker-sandbox 'sleep 30' \
-      || fail 'could not start the isolated tmux server for the sandbox regression'
-    SANDBOX_TMUX_SOCKET=$socket
-  fi
-  printf 'TMUX=%s,9001,0\0' "$socket" > "$dir/proc/$$/environ"
-  install_case "$dir"
-  units="$dir/xdg/systemd/user"
-  assert_contains "$(cat "$units/firstmate-codex-telegram-waker.service")" \
-    "Environment=\"FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET=$socket\"" \
-    'installed service did not record the exact tmux socket contract'
-  printf '2026-08-15T00:00:00Z queued sandbox-request\n' >> "$dir/bridge.log"
-  chmod 000 "$dir/proc/$$/environ" "$dir/proc/$$/fd"
-  run_case "$dir" "FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET=$socket" >/dev/null 2>&1 \
-    || fail 'recorded socket run could not bind with sandbox-hidden process environment and descriptors'
-  [ "$(literal_count "$dir")" -eq 1 ] \
-    || fail 'recorded socket run did not reach the identity-safe pane'
-  if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
-    && systemctl --user show-environment >/dev/null 2>&1; then
+  if command -v tmux >/dev/null 2>&1 && command -v systemd-run >/dev/null 2>&1 \
+    && command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    real_tmux=$(command -v tmux)
+    real_ps=$(command -v ps)
+    real_sleep=$(command -v sleep)
     fakebin=$(cat "$dir/fakebin.path")
+    ln -sf "$real_tmux" "$fakebin/tmux"
+    ln -sf "$real_ps" "$fakebin/ps"
+    ln -sf "$real_sleep" "$fakebin/sleep"
+    tmux -S "$socket" new-session -d -s fm-waker-sandbox -c "$dir/home" \
+      "exec -a codex bash -c 'printf \"› \"; while IFS= read -r line; do printf \"%s\\n› \" \"\$line\"; done'" \
+      || fail 'could not start the isolated real tmux primary for the sandbox regression'
+    SANDBOX_TMUX_SOCKET=$socket
+    primary_pid=$(tmux -S "$socket" display-message -p -t fm-waker-sandbox:0.0 '#{pane_pid}') \
+      || fail 'could not resolve the isolated real tmux primary pid'
+    printf '%s\n' "$primary_pid" > "$dir/home/state/.lock"
+    env HOME="$dir/user" XDG_CONFIG_HOME="$dir/xdg" FM_HOME="$dir/home" \
+      FM_STATE_OVERRIDE="$dir/home/state" FM_PROC_ROOT_OVERRIDE=/proc \
+      FM_FAKE_SYSTEMCTL_LOG="$dir/systemctl.log" PATH="$fakebin:$PATH" \
+      "$WAKER" install --bridge-log "$dir/bridge.log" >/dev/null \
+      || fail 'public install could not bind the isolated real tmux primary'
+    units="$dir/xdg/systemd/user"
+    assert_contains "$(cat "$units/firstmate-codex-telegram-waker.service")" \
+      "Environment=\"FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET=$socket\"" \
+      'installed service did not record the exact real tmux socket contract'
+    printf '2026-08-15T00:00:00Z queued sandbox-request\n' >> "$dir/bridge.log"
     set +e
     out=$(systemd-run --user --wait --collect --pipe \
       --property ProtectSystem=strict \
@@ -294,11 +300,8 @@ test_sandboxed_service_can_reach_its_exact_tmux_socket() {
       --property RestrictAddressFamilies=AF_UNIX \
       --property IPAddressDeny=any \
       env HOME="$dir/user" XDG_CONFIG_HOME="$dir/xdg" FM_HOME="$dir/home" \
-      FM_STATE_OVERRIDE="$dir/home/state" FM_PROC_ROOT_OVERRIDE="$dir/proc" \
-      FM_FAKE_PRIMARY_PID="$$" FM_FAKE_HOME="$dir/home" FM_FAKE_TTY=/dev/pts/99 \
-      FM_FAKE_SYSTEMCTL_LOG="$dir/systemctl.log" FM_FAKE_TMUX_CALLS="$dir/tmux.log" \
-      FM_FAKE_SEND_LOG="$dir/send.log" FM_FAKE_COMPOSER_MODE="$dir/composer" \
-      FM_FAKE_SLEEP_ONCE="$dir/sleep.once" FM_FAKE_NETWORK_LOG="$NETWORK_LOG" \
+      FM_STATE_OVERRIDE="$dir/home/state" FM_PROC_ROOT_OVERRIDE=/proc \
+      FM_FAKE_NETWORK_LOG="$NETWORK_LOG" \
       FM_CODEX_TELEGRAM_WAKER_TMUX_SOCKET="$socket" FM_CODEX_TELEGRAM_WAKER_MAX_LOOPS=1 \
       FM_CODEX_TELEGRAM_WAKER_POLL_SECONDS=0 FM_CODEX_TELEGRAM_WAKER_RETRY_SECONDS=0 \
       FM_CODEX_TELEGRAM_WAKER_CONFIRM_SLEEP=0 FM_CODEX_TELEGRAM_WAKER_CONFIRM_RETRIES=1 \
@@ -306,8 +309,12 @@ test_sandboxed_service_can_reach_its_exact_tmux_socket() {
     status=$?
     set -e
     [ "$status" -eq 0 ] || fail "sandboxed executable waker run failed: $out"
+    out=$(tmux -S "$socket" capture-pane -p -J -t fm-waker-sandbox:0.0 -S -20) \
+      || fail 'could not inspect the isolated real tmux primary after delivery'
+    assert_contains "$out" 'Telegram Relay request sandbox-request is still queued.' \
+      'sandboxed executable run did not deliver through the real tmux socket'
   else
-    printf 'skip: user systemd unavailable for sandboxed executable waker run\n'
+    printf 'skip: tmux or user systemd unavailable for sandboxed real-socket run\n'
   fi
   tmux -S "$socket" kill-server 2>/dev/null || true
   SANDBOX_TMUX_SOCKET=
