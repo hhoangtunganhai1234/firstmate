@@ -138,7 +138,8 @@ ANSWER="$LANE_TMP/answer.txt"
         "$HARNESS_BIN" run --pure --format default < prompt > answer.txt
       ;;
     pi|pi-signed)
-      "$HARNESS_BIN" -p --no-context-files --no-session --no-tools < prompt > answer.txt
+      "$HARNESS_BIN" -p --no-context-files --no-session --no-tools \
+        --no-extensions --no-skills --no-prompt-templates < prompt > answer.txt
       ;;
     grok)
       "$HARNESS_BIN" -p --prompt-file prompt --tools "" --no-memory --disable-web-search > answer.txt

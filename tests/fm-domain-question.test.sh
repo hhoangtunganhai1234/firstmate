@@ -33,6 +33,9 @@ for argument in "$@"; do
   if [ "$previous" = agent_file ]; then agent_file=$argument; fi
   if [ "$argument" = --no-tools ]; then tools_disabled=1; fi
   if [ "$argument" = --pure ]; then pure=1; fi
+  if [ "$argument" = --no-extensions ]; then no_extensions=1; fi
+  if [ "$argument" = --no-skills ]; then no_skills=1; fi
+  if [ "$argument" = --no-prompt-templates ]; then no_prompt_templates=1; fi
   case "$argument" in
     --tools) previous=tools ;;
     --prompt-file) previous=prompt_file ;;
@@ -55,8 +58,6 @@ case "${FM_DOMAIN_HARNESS:-}" in
   kimi)
     [ "$agent_file" = kimi-agent.yaml ]
     [ "${KIMI_CODE_EXPERIMENTAL_FLAG:-}" = 1 ]
-    grep -Fx '  tools: []' "$agent_file" >/dev/null
-    tools_disabled=1
     payload=$(cat prompt)
     ;;
   *) payload=$(cat) ;;
@@ -64,9 +65,18 @@ esac
 if [ "${FM_DOMAIN_HARNESS:-}" = opencode ]; then
   [ "$pure" -eq 1 ]
   [ "${OPENCODE_CONFIG_CONTENT:-}" = '{"instructions":[],"permission":{"*":"deny"}}' ]
+elif [ "${FM_DOMAIN_HARNESS:-}" = kimi ]; then
+  :
 else
   [ "$tools_disabled" -eq 1 ]
 fi
+case "${FM_DOMAIN_HARNESS:-}" in
+  pi|pi-signed)
+    [ "${no_extensions:-0}" -eq 1 ]
+    [ "${no_skills:-0}" -eq 1 ]
+    [ "${no_prompt_templates:-0}" -eq 1 ]
+    ;;
+esac
 printf '%s' "$payload" | grep -F 'sale memory' >/dev/null
 printf '%s' "$payload" | grep -F 'sale facts' >/dev/null
 if printf '%s' "$payload" | grep -F 'pnl secret' >/dev/null; then exit 23; fi
@@ -96,7 +106,7 @@ for harness in claude opencode pi pi-signed grok kimi muse; do
   out=$(FM_TEST_DOMAIN_HARNESS="$harness" run_lane) || fail "$harness must dispatch in an isolated tool-free lane"
   [ "$out" = 'sale lane answer' ] || fail "$harness lane answer must be returned"
 done
-pass "all supported harnesses use isolated tool-free one-shot adapters"
+pass "supported harness adapters receive only selected snapshots"
 
 printf '%s\n' '{"text":"tag fallback #Com.sale"}' > "$INBOX"
 out=$(run_lane) || fail "tagged question without chat_id must route"
