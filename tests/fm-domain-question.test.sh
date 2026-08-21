@@ -24,6 +24,7 @@ set -eu
 tools_disabled=0
 pure=0
 isolated=0
+bare=0
 prompt_file=
 agent_file=
 previous=
@@ -33,6 +34,7 @@ for argument in "$@"; do
   if [ "$previous" = agent_file ]; then agent_file=$argument; fi
   if [ "$argument" = --no-tools ]; then tools_disabled=1; fi
   if [ "$argument" = --pure ]; then pure=1; fi
+  if [ "$argument" = --bare ]; then bare=1; fi
   if [ "$argument" = --no-extensions ]; then no_extensions=1; fi
   if [ "$argument" = --no-skills ]; then no_skills=1; fi
   if [ "$argument" = --no-prompt-templates ]; then no_prompt_templates=1; fi
@@ -62,7 +64,10 @@ case "${FM_DOMAIN_HARNESS:-}" in
     ;;
   *) payload=$(cat) ;;
 esac
-if [ "${FM_DOMAIN_HARNESS:-}" = opencode ]; then
+if [ "${FM_DOMAIN_HARNESS:-}" = claude ]; then
+  [ "$bare" -eq 1 ]
+  [ "$tools_disabled" -eq 1 ]
+elif [ "${FM_DOMAIN_HARNESS:-}" = opencode ]; then
   [ "$pure" -eq 1 ]
   [ "${OPENCODE_CONFIG_CONTENT:-}" = '{"instructions":[],"permission":{"*":"deny"}}' ]
 elif [ "${FM_DOMAIN_HARNESS:-}" = kimi ]; then

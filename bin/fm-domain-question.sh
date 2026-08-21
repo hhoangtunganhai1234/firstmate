@@ -122,7 +122,7 @@ ANSWER="$LANE_TMP/answer.txt"
   cd "$LANE_TMP"
   case "$HARNESS" in
     claude)
-      "$HARNESS_BIN" -p --no-session-persistence --tools "" --disable-slash-commands \
+      "$HARNESS_BIN" -p --bare --no-session-persistence --tools "" --disable-slash-commands \
         --strict-mcp-config --mcp-config '{"mcpServers":{}}' --setting-sources '' --output-format text \
         < prompt > answer.txt
       ;;
