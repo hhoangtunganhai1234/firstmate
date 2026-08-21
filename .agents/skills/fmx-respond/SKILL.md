@@ -81,7 +81,7 @@ When recovery replaces a linked task, carry the prior count, timestamp, platform
 Every drained mention sorts into one of three cases:
 
 - **Actionable instruction or request** starts the normal lifecycle and receives either the verified immediate outcome, an evidence-backed start acknowledgment, or an honest start failure.
-- **Question** receives an answer from current evidence and creates no follow-up.
+- **Question** receives only the validated routed lane's answer and creates no follow-up.
 - **Pure acknowledgment** posts no reply, but is dismissed through `bin/fm-x-dismiss.sh <request_id>` before inbox cleanup.
 
 Normal reversible work proceeds under the standing Relay authorization.
