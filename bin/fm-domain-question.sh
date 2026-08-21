@@ -78,10 +78,19 @@ jq -n --arg domain "$DOMAIN" --arg question "$TEXT" --slurpfile memory "$LANE_TM
   "Do not use outside knowledge or infer another domain.\n\n" +
   ({domain:$domain,question:$question,memory:$memory[0],data_binding:$binding[0],data:$data[0]} | tojson)
 ' -r > "$LANE_TMP/prompt"
+mkdir "$LANE_TMP/skills"
+cat > "$LANE_TMP/kimi-agent.yaml" <<'EOF'
+version: 1
+agent:
+  name: fm-domain-lane
+  system_prompt_path: ./prompt
+  tools: []
+  subagents: []
+EOF
 
 HARNESS=${FM_DOMAIN_HARNESS:-$("$SCRIPT_DIR/fm-harness.sh")}
 case "$HARNESS" in
-  claude|codex|pi|pi-signed) ;;
+  claude|codex|opencode|pi|pi-signed|grok|kimi|muse) ;;
   *) echo "fm-domain-question: no verified tool-free ephemeral lane for harness: $HARNESS" >&2; exit 2 ;;
 esac
 if [ -n "${FM_DOMAIN_HARNESS_BIN:-}" ]; then
@@ -95,23 +104,42 @@ fi
   || { echo "fm-domain-question: unavailable harness executable: $HARNESS" >&2; exit 2; }
 
 ANSWER="$LANE_TMP/answer.txt"
-case "$HARNESS" in
-  claude)
-    "$HARNESS_BIN" -p --no-session-persistence --tools "" --disable-slash-commands \
-      --strict-mcp-config --mcp-config '{"mcpServers":{}}' --setting-sources '' --output-format text \
-      < "$LANE_TMP/prompt" > "$ANSWER"
-    ;;
-  codex)
-    "$HARNESS_BIN" exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only --skip-git-repo-check \
-      --disable shell_tool --disable unified_exec --disable code_mode_host --disable apps --disable browser_use \
-      --disable browser_use_external --disable computer_use --disable image_generation --disable multi_agent \
-      --disable multi_agent_v2 --disable skill_search --disable tool_suggest --disable view_image \
-      -C "$LANE_TMP" --output-last-message "$ANSWER" - < "$LANE_TMP/prompt" >/dev/null
-    ;;
-  pi|pi-signed)
-    "$HARNESS_BIN" -p --no-context-files --no-session --no-tools < "$LANE_TMP/prompt" > "$ANSWER"
-    ;;
-esac
+(
+  cd "$LANE_TMP"
+  case "$HARNESS" in
+    claude)
+      "$HARNESS_BIN" -p --no-session-persistence --tools "" --disable-slash-commands \
+        --strict-mcp-config --mcp-config '{"mcpServers":{}}' --setting-sources '' --output-format text \
+        < prompt > answer.txt
+      ;;
+    codex)
+      "$HARNESS_BIN" exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only --skip-git-repo-check \
+        --disable shell_tool --disable unified_exec --disable code_mode_host --disable apps --disable browser_use \
+        --disable browser_use_external --disable computer_use --disable image_generation --disable multi_agent \
+        --disable multi_agent_v2 --disable skill_search --disable tool_suggest --disable view_image \
+        -C . --output-last-message answer.txt - < prompt >/dev/null
+      ;;
+    opencode)
+      OPENCODE_CONFIG_CONTENT='{"instructions":[],"permission":{"*":"deny"}}' \
+        "$HARNESS_BIN" run --pure --format default < prompt > answer.txt
+      ;;
+    pi|pi-signed)
+      "$HARNESS_BIN" -p --no-context-files --no-session --no-tools < prompt > answer.txt
+      ;;
+    grok)
+      "$HARNESS_BIN" -p --prompt-file prompt --tools "" --no-memory --disable-web-search > answer.txt
+      ;;
+    kimi)
+      KIMI_CODE_EXPERIMENTAL_FLAG=1 "$HARNESS_BIN" -p "Answer the supplied system prompt." \
+        --output-format text --agent-file kimi-agent.yaml --skills-dir skills > answer.txt
+      ;;
+    muse)
+      MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=on \
+        "$HARNESS_BIN" exec --no-foreign-personal-context --no-tools --no-session-log \
+        --workspace "$LANE_TMP" --prompt-file prompt > answer.txt
+      ;;
+  esac
+)
 
 [ -f "$ANSWER" ] && [ ! -L "$ANSWER" ] && [ -s "$ANSWER" ] \
   || { echo "fm-domain-question: lane returned no valid answer" >&2; exit 2; }

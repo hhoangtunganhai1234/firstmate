@@ -345,8 +345,8 @@ The file is optional; without it, tagged questions still route and untagged ques
 
 Each routable domain has memory files under `data/domains/<domain>/` and a binding at `config/domain-bindings/<domain>.json`.
 The binding is a JSON object with `"mode":"read-only"` and a non-empty `source` path, relative to the Firstmate home or absolute.
-`bin/fm-domain-question.sh` is the question intake boundary: it accepts a Relay inbox record, resolves the current Firstmate harness, and runs its verified tool-free ephemeral mode.
-Claude, Codex, Pi, and Pi Signed have verified tool-free one-shot adapters; every other harness fails closed until it has an equivalent verified boundary.
+`bin/fm-domain-question.sh` is the question intake boundary: it accepts a Relay inbox record, resolves the current Firstmate harness, and runs its verified tool-free ephemeral mode from a private lane directory.
+Claude, Codex, OpenCode, Pi, Pi Signed, Grok, Kimi, and Muse have tool-free one-shot adapters; an unknown harness fails closed.
 The harness receives broker-read snapshots of only the selected memory and data source, streamed through private files rather than command arguments, and no lane-visible tool can reach credentials or another domain.
 Missing dependencies, memory, sources, bindings, malformed inbox records, and invalid routing configuration fail closed before an answer is accepted.
 

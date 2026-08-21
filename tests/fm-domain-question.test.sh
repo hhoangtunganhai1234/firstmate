@@ -14,23 +14,58 @@ printf '%s\n' '{"mode":"read-only","source":"data/sources/sale"}' > "$HOME_DIR/c
 printf '%s\n' 'sale memory' > "$HOME_DIR/data/domains/sale/brief.md"
 printf '%s\n' 'pnl secret' > "$HOME_DIR/data/domains/pnl/brief.md"
 printf '%s\n' 'sale facts' > "$HOME_DIR/data/sources/sale/facts.txt"
+printf '%s\n' 'ambient claude secret' > "$HOME_DIR/CLAUDE.md"
+printf '%s\n' 'ambient agents secret' > "$HOME_DIR/AGENTS.md"
 
 FAKE_HARNESS="$TMP_ROOT/harness"
 cat > "$FAKE_HARNESS" <<'RUNNER'
 #!/bin/sh
 set -eu
 tools_disabled=0
+pure=0
+isolated=0
+prompt_file=
+agent_file=
 previous=
 for argument in "$@"; do
   if [ "$previous" = tools ] && [ -z "$argument" ]; then tools_disabled=1; fi
+  if [ "$previous" = prompt_file ]; then prompt_file=$argument; fi
+  if [ "$previous" = agent_file ]; then agent_file=$argument; fi
   if [ "$argument" = --no-tools ]; then tools_disabled=1; fi
-  if [ "$argument" = --tools ]; then previous=tools; else previous=; fi
+  if [ "$argument" = --pure ]; then pure=1; fi
+  case "$argument" in
+    --tools) previous=tools ;;
+    --prompt-file) previous=prompt_file ;;
+    --agent-file) previous=agent_file ;;
+    *) previous= ;;
+  esac
 done
-[ "$tools_disabled" -eq 1 ]
-payload=$(cat)
+[ "${PWD##*/}" != "home" ]
+case "$PWD" in */state/.domain-lane.*) isolated=1 ;; esac
+[ "$isolated" -eq 1 ]
+[ ! -e CLAUDE.md ] && [ ! -e AGENTS.md ]
+case "${FM_DOMAIN_HARNESS:-}" in
+  grok|muse) [ "$prompt_file" = prompt ]; payload=$(cat "$prompt_file") ;;
+  kimi)
+    [ "$agent_file" = kimi-agent.yaml ]
+    [ "${KIMI_CODE_EXPERIMENTAL_FLAG:-}" = 1 ]
+    grep -Fx '  tools: []' "$agent_file" >/dev/null
+    tools_disabled=1
+    payload=$(cat prompt)
+    ;;
+  *) payload=$(cat) ;;
+esac
+if [ "${FM_DOMAIN_HARNESS:-}" = opencode ]; then
+  [ "$pure" -eq 1 ]
+  [ "${OPENCODE_CONFIG_CONTENT:-}" = '{"instructions":[],"permission":{"*":"deny"}}' ]
+else
+  [ "$tools_disabled" -eq 1 ]
+fi
 printf '%s' "$payload" | grep -F 'sale memory' >/dev/null
 printf '%s' "$payload" | grep -F 'sale facts' >/dev/null
 if printf '%s' "$payload" | grep -F 'pnl secret' >/dev/null; then exit 23; fi
+if printf '%s' "$payload" | grep -F 'ambient claude secret' >/dev/null; then exit 24; fi
+if printf '%s' "$payload" | grep -F 'ambient agents secret' >/dev/null; then exit 25; fi
 printf '%s\n' 'sale lane answer'
 RUNNER
 chmod +x "$FAKE_HARNESS"
@@ -49,6 +84,12 @@ pass "current harness receives only selected snapshots without tools"
 out=$(FM_TEST_DOMAIN_HARNESS=pi run_lane) || fail "Pi must use the same harness-neutral lane boundary"
 [ "$out" = 'sale lane answer' ] || fail "Pi lane answer must be returned"
 pass "harness-neutral dispatch does not require Codex"
+
+for harness in claude opencode pi pi-signed grok kimi muse; do
+  out=$(FM_TEST_DOMAIN_HARNESS="$harness" run_lane) || fail "$harness must dispatch in an isolated tool-free lane"
+  [ "$out" = 'sale lane answer' ] || fail "$harness lane answer must be returned"
+done
+pass "all supported harnesses use isolated tool-free one-shot adapters"
 
 printf '%s\n' '{"text":"tag fallback #Com.sale"}' > "$INBOX"
 out=$(run_lane) || fail "tagged question without chat_id must route"
@@ -75,8 +116,8 @@ out=$(run_lane) || fail "large snapshots must stream without argv expansion"
 [ "$out" = 'sale lane answer' ] || fail "large snapshot lane answer must be returned"
 pass "multi-megabyte snapshots stream outside argv"
 
-if FM_HOME="$HOME_DIR" FM_DOMAIN_HARNESS=grok FM_DOMAIN_HARNESS_BIN="$FAKE_HARNESS" \
+if FM_HOME="$HOME_DIR" FM_DOMAIN_HARNESS=unknown FM_DOMAIN_HARNESS_BIN="$FAKE_HARNESS" \
   "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX" >/dev/null 2>&1; then
-  fail "unverified tool-free harness boundary must fail closed"
+  fail "unknown harness boundary must fail closed"
 fi
-pass "harnesses without verified tool-free mode fail closed"
+pass "unknown harnesses fail closed"
