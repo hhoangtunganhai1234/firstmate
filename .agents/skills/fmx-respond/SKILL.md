@@ -171,12 +171,16 @@ Treat `state/x-inbox/` as the source of truth and process **every** file you fin
    Distinguish automated checks, merge state, deployment or data-write state, and live verification whenever the difference affects readiness.
    Translate internal items into outcomes while preserving the evidence needed for a decision.
 2. **Drain every pending mention.** For each `state/x-inbox/*.json` file:
-   a. Read the object: you need `request_id`, `text`, `in_reply_to`, the poll-stamped `reply_audience`, and - when present - `in_reply_to_chain`.
+   a. Read the object: you need `request_id`, `text`, `chat_id`, `in_reply_to`, the poll-stamped `reply_audience`, and - when present - `in_reply_to_chain`.
       Resolve public or private-trusted mode for this request before classifying or composing it.
       `in_reply_to` is `{author_handle, text}` when this mention is a reply within an ongoing conversation, or `null` for a fresh, standalone mention.
       `in_reply_to_chain` is the optional surrounding-conversation transcript; [the Relay configuration reference](../../../docs/configuration.md#relay-env) owns its exact wire shape and compatibility semantics.
       Read every entry in its documented oldest-first order, including `history` entries and unavailable gaps, but treat the chain as optional context because it is often absent today: use it when present and proceed normally without it.
       Ignore `tweet_id` entirely - you never name a platform message id; the relay binds the reply for you.
+      Before classifying a possible business-domain question, run `bin/fm-domain-route.sh <chat_id> <text>`.
+      Its result is authoritative: an exact configured `chat_id` binding wins, otherwise exactly one `#Com.<domain>` tag selects the domain, and every other result requires asking the captain which domain applies.
+      Never infer a domain from the question's wording, nearby conversation, memory contents, or the apparent subject matter.
+      A routed domain question is answered by a lane wearing only that domain's memory and read-only data binding; Firstmate does not answer it from another domain or create a resident domain process.
    b. **Classify the mention into one of three cases** (see "Register requested work before acknowledging it"):
       - **Actionable instruction / request** ("add this to the backlog", "look into X", "fix Y", "ship Z") - go to step 2c and do the work first.
       - **Question** - nothing to do; skip step 2c and answer from live fleet state in step 2d.

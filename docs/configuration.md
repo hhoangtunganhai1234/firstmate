@@ -329,6 +329,20 @@ The locked bootstrap inheritance pass uses the same placement-specific behavior;
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
 
+## Business-domain routing (config/domain-routing.json)
+
+`config/domain-routing.json` is an optional home-local map used when a Relay question may belong to a business-domain lane.
+It contains one `chat_domains` object whose keys are exact Relay `chat_id` strings and whose values are domain names:
+
+```json
+{"chat_domains":{"-1001234567890":"sale"}}
+```
+
+`bin/fm-domain-route.sh` owns validation and resolution mechanics.
+An exact chat binding has first priority, exactly one `#Com.<domain>` tag has second priority, and an absent or ambiguous result requires asking the captain.
+Question wording and surrounding conversation never select a domain.
+The file is optional; without it, tagged questions still route and untagged questions require clarification.
+
 ## Relay (.env)
 
 Relay lets a firstmate instance answer routed mentions and act on normal reversible mention requests through firstmate's normal lifecycle.
