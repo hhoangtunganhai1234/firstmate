@@ -77,7 +77,9 @@ config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitig
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 config/domain-routing.json  optional business-domain routing map from exact Relay chat ids to domain names; LOCAL, gitignored; see docs/configuration.md "Business-domain routing"
+config/domain-bindings/  per-domain read-only data bindings for ephemeral question lanes; LOCAL, gitignored; see docs/configuration.md "Business-domain routing"
 data/                personal fleet records; LOCAL, gitignored as a whole
+  domains/           per-domain memory loaded only by the selected ephemeral question lane
   backlog.md         task queue, dependencies, history
   captain.md         this home's domain-local captain preferences and working style; LOCAL, gitignored, canonical even if harness memory mirrors it, and updated with inspect-then-update
   captain-shared.md  main-authoritative shared captain preferences propagated read-only to secondmate homes; LOCAL, gitignored, owned by secondmate-provisioning

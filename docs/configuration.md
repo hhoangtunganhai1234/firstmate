@@ -343,6 +343,11 @@ An exact chat binding has first priority, exactly one `#Com.<domain>` tag has se
 Question wording and surrounding conversation never select a domain.
 The file is optional; without it, tagged questions still route and untagged questions require clarification.
 
+Each routable domain has memory files under `data/domains/<domain>/` and a binding at `config/domain-bindings/<domain>.json`.
+The binding is a JSON object with a non-empty `source` and `"mode":"read-only"`.
+`bin/fm-domain-question.sh` is the question intake boundary: it accepts a Relay inbox record, invokes resolution, and gives the ephemeral lane runner one `fm-domain-lane.v1` object containing only the selected domain's memory and validated read-only binding.
+Missing memory, missing or invalid bindings, malformed inbox records, and invalid routing configuration fail closed without invoking the runner.
+
 ## Relay (.env)
 
 Relay lets a firstmate instance answer routed mentions and act on normal reversible mention requests through firstmate's normal lifecycle.
