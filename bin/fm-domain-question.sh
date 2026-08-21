@@ -20,11 +20,11 @@ command -v jq >/dev/null 2>&1 || { echo "fm-domain-question: missing jq" >&2; ex
 PLATFORM=${FM_DOMAIN_PLATFORM:-$(uname -s)}
 case "$PLATFORM" in
   Linux) command -v bwrap >/dev/null 2>&1 || { echo "fm-domain-question: missing bubblewrap" >&2; exit 2; } ;;
-  Darwin) command -v "${FM_DOMAIN_SANDBOX_EXEC_BIN:-sandbox-exec}" >/dev/null 2>&1 || { echo "fm-domain-question: missing sandbox-exec" >&2; exit 2; } ;;
+  Darwin) command -v sandbox-exec >/dev/null 2>&1 || { echo "fm-domain-question: missing sandbox-exec" >&2; exit 2; } ;;
   *) echo "fm-domain-question: unsupported isolation platform: $PLATFORM" >&2; exit 2 ;;
 esac
 
-CHAT_ID=$(jq -er 'if (.chat_id | type) == "string" or (.chat_id | type) == "number" then .chat_id | tostring else error("chat_id must be a string or number") end' "$INBOX") \
+CHAT_ID=$(jq -er 'if has("chat_id") then if (.chat_id | type) == "string" or (.chat_id | type) == "number" then .chat_id | tostring else error("chat_id must be a string or number") end else "" end' "$INBOX") \
   || { echo "fm-domain-question: invalid inbox chat_id" >&2; exit 2; }
 TEXT=$(jq -er 'if (.text | type) == "string" then .text else error("text must be a string") end' "$INBOX") \
   || { echo "fm-domain-question: invalid inbox text" >&2; exit 2; }
@@ -81,25 +81,40 @@ if [ "${CODEX_BIN##*.}" = js ]; then
   HOST_CODEX_LAUNCH=("$NODE_BIN" "$CODEX_BIN")
 fi
 
-if [ "$PLATFORM" = Linux ]; then
-  MEMORY_LABEL=/lane/memory
-  DATA_LABEL=/lane/data
-  BINDING_LABEL=/lane/binding.json
-else
+if [ "$PLATFORM" = Darwin ]; then
   ln -s "$MEMORY" "$LANE_TMP/scratch/memory"
   ln -s "$SOURCE" "$LANE_TMP/scratch/data"
   ln -s "$BINDING" "$LANE_TMP/scratch/binding.json"
   ln -s "$AUTH" "$LANE_TMP/scratch/home/.codex/auth.json"
-  MEMORY_LABEL="$LANE_TMP/scratch/memory"
-  DATA_LABEL="$LANE_TMP/scratch/data"
-  BINDING_LABEL="$LANE_TMP/scratch/binding.json"
 fi
-jq -n --arg domain "$DOMAIN" --arg question "$TEXT" --arg memory "$MEMORY_LABEL" --arg data "$DATA_LABEL" --arg binding "$BINDING_LABEL" '
-  "You are an ephemeral domain-question lane. Answer only the supplied question. " +
-  "Use only memory under " + $memory + " and the read-only data source at " + $data + ". " +
-  "The binding contract is " + $binding + ". Do not use outside knowledge or infer another domain.\n\n" +
-  "Domain: " + $domain + "\nQuestion: " + $question
+
+snapshot_path() {
+  local root=$1
+  if [ -f "$root" ]; then
+    jq -n --arg name "$(basename "$root")" --rawfile content "$root" '[{name:$name,content:$content}]'
+    return
+  fi
+  find "$root" -type f ! -path '*/.*' -print0 \
+    | sort -z \
+    | while IFS= read -r -d '' file; do
+        [ ! -L "$file" ] || exit 2
+        jq -n --arg name "${file#"$root"/}" --rawfile content "$file" '{name:$name,content:$content}'
+      done \
+    | jq -s '.'
+}
+MEMORY_SNAPSHOT=$(snapshot_path "$MEMORY") || { echo "fm-domain-question: invalid domain memory: $DOMAIN" >&2; exit 2; }
+DATA_SNAPSHOT=$(snapshot_path "$SOURCE") || { echo "fm-domain-question: invalid domain source: $DOMAIN" >&2; exit 2; }
+jq -n --arg domain "$DOMAIN" --arg question "$TEXT" --argjson memory "$MEMORY_SNAPSHOT" \
+  --argjson data "$DATA_SNAPSHOT" --slurpfile binding "$BINDING" '
+  "You are an ephemeral domain-question lane with no tools. Answer only from the supplied JSON inputs. " +
+  "Do not use outside knowledge or infer another domain.\n\n" +
+  ({domain:$domain,question:$question,memory:$memory,data_binding:$binding[0],data:$data} | tojson)
 ' -r > "$LANE_TMP/prompt"
+
+CODEX_ARGS=(exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only --skip-git-repo-check \
+  --disable shell_tool --disable unified_exec --disable code_mode_host --disable apps --disable browser_use \
+  --disable browser_use_external --disable computer_use --disable image_generation --disable multi_agent \
+  --disable multi_agent_v2 --disable skill_search --disable tool_suggest --disable view_image)
 
 if [ "$PLATFORM" = Linux ]; then
   bwrap --die-with-parent --new-session --unshare-all --share-net \
@@ -116,8 +131,8 @@ if [ "$PLATFORM" = Linux ]; then
     "${CODEX_MOUNTS[@]}" \
     --clearenv --setenv HOME /lane/home --setenv CODEX_HOME /lane/home/.codex --setenv PATH /opt:/usr/bin:/bin \
     --chdir /lane \
-    "${CODEX_LAUNCH[@]}" exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only \
-    --skip-git-repo-check -C /lane --output-last-message /output/answer.txt - < "$LANE_TMP/prompt" >/dev/null
+    "${CODEX_LAUNCH[@]}" "${CODEX_ARGS[@]}" -C /lane --output-last-message /output/answer.txt - \
+    < "$LANE_TMP/prompt" >/dev/null
 else
   seatbelt_path() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
   CODEX_READ=$(seatbelt_path "$(dirname "$CODEX_BIN")")
@@ -141,13 +156,12 @@ else
     "(allow file-read* (subpath \"$CODEX_READ\") (subpath \"$NODE_READ\") (literal \"$AUTH_READ\") (subpath \"$MEMORY_READ\") (literal \"$BINDING_READ\") (subpath \"$SOURCE_READ\") (subpath \"$SCRATCH_ACCESS\"))" \
     "(allow file-write* (subpath \"$SCRATCH_ACCESS\") (subpath \"$OUTPUT_ACCESS\"))" \
     > "$PROFILE"
-  SANDBOX_EXEC=${FM_DOMAIN_SANDBOX_EXEC_BIN:-sandbox-exec}
   (
     cd "$LANE_TMP/scratch"
-    "$SANDBOX_EXEC" -f "$PROFILE" /usr/bin/env -i HOME="$LANE_TMP/scratch/home" \
+    sandbox-exec -f "$PROFILE" /usr/bin/env -i HOME="$LANE_TMP/scratch/home" \
       CODEX_HOME="$LANE_TMP/scratch/home/.codex" TMPDIR="$LANE_TMP/scratch/tmp" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-      "${HOST_CODEX_LAUNCH[@]}" exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only \
-      --skip-git-repo-check -C "$LANE_TMP/scratch" --output-last-message "$LANE_TMP/output/answer.txt" - \
+      "${HOST_CODEX_LAUNCH[@]}" "${CODEX_ARGS[@]}" -C "$LANE_TMP/scratch" \
+      --output-last-message "$LANE_TMP/output/answer.txt" - \
       < "$LANE_TMP/prompt" >/dev/null
   )
 fi
