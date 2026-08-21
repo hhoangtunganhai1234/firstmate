@@ -4,7 +4,7 @@
 #
 # Optional config/domain-routing.json shape:
 #   {"chat_domains":{"-1001234567890":"sale"}}
-# Both chat ids and domains must be strings. Invalid configuration fails closed.
+# Both chat ids and lowercase domain names must be strings. Invalid configuration fails closed.
 # Output is one JSON object with action route or ask.
 # Usage: fm-domain-route.sh [--routes <path>] <chat_id> <text>
 set -eu
@@ -30,12 +30,12 @@ if [ -e "$ROUTES" ]; then
   if [ ! -f "$ROUTES" ] || ! jq -e '
       type == "object" and
       (.chat_domains | type == "object") and
-      all(.chat_domains | to_entries[]; (.key | type) == "string" and (.value | type) == "string" and (.value | test("^[A-Za-z][A-Za-z0-9_-]*$")))
+      all(.chat_domains | to_entries[]; (.key | type) == "string" and (.value | type) == "string" and (.value | test("^[a-z][a-z0-9_-]*$")))
     ' "$ROUTES" >/dev/null 2>&1; then
     echo "fm-domain-route: invalid routing file: $ROUTES" >&2
     exit 2
   fi
-  domain=$(jq -r --arg chat "$CHAT_ID" '.chat_domains[$chat] // "" | ascii_downcase' "$ROUTES")
+  domain=$(jq -r --arg chat "$CHAT_ID" '.chat_domains[$chat] // ""' "$ROUTES")
 fi
 
 if [ -n "$domain" ]; then

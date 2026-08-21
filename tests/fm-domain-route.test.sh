@@ -36,4 +36,10 @@ if "$ROUTER" --routes "$TMP/invalid.json" -999 '#Com.sale test' >/dev/null 2>&1;
   exit 1
 fi
 
+printf '%s\n' '{"chat_domains":{"-1001":"Sale"}}' > "$TMP/uppercase.json"
+if "$ROUTER" --routes "$TMP/uppercase.json" -1001 '#Com.sale test' >/dev/null 2>&1; then
+  echo "FAIL: uppercase configured domains must fail closed" >&2
+  exit 1
+fi
+
 echo "PASS: fm-domain-route"

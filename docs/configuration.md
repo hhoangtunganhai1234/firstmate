@@ -332,7 +332,7 @@ Skipped items, such as a destination checkout that does not yet gitignore the it
 ## Business-domain routing (config/domain-routing.json)
 
 `config/domain-routing.json` is an optional home-local map used when a Relay question may belong to a business-domain lane.
-It contains one `chat_domains` object whose keys are exact Relay `chat_id` strings and whose values are domain names:
+It contains one `chat_domains` object whose keys are exact Relay `chat_id` strings and whose values are lowercase domain names:
 
 ```json
 {"chat_domains":{"-1001234567890":"sale"}}
