@@ -48,6 +48,39 @@ out=$(FM_HOME="$HOME_DIR" FM_DOMAIN_CODEX_BIN="$FAKE_CODEX" FM_DOMAIN_CODEX_AUTH
 [ ! -e "$HOME_DIR/data/sources/sale/probe" ] || fail "lane must not mutate its bound data source"
 pass "real lane entry point isolates memory and read-only data"
 
+FAKE_SANDBOX="$TMP_ROOT/sandbox-exec"
+cat > "$FAKE_SANDBOX" <<'SANDBOX'
+#!/bin/sh
+set -eu
+[ "$1" = -f ]
+[ -s "$2" ]
+shift 2
+exec "$@"
+SANDBOX
+chmod +x "$FAKE_SANDBOX"
+FAKE_DARWIN_CODEX="$TMP_ROOT/darwin-codex"
+cat > "$FAKE_DARWIN_CODEX" <<'RUNNER'
+#!/bin/sh
+set -eu
+answer=
+previous=
+for argument in "$@"; do
+  if [ "$previous" = output ]; then answer=$argument; fi
+  if [ "$argument" = --output-last-message ]; then previous=output; else previous=; fi
+done
+[ "$(cat memory/brief.md)" = 'sale memory' ]
+[ "$(cat data/facts.txt)" = 'sale facts' ]
+cat >/dev/null
+printf '%s\n' 'darwin lane answer' > "$answer"
+RUNNER
+chmod +x "$FAKE_DARWIN_CODEX"
+out=$(FM_HOME="$HOME_DIR" FM_DOMAIN_PLATFORM=Darwin FM_DOMAIN_SANDBOX_EXEC_BIN="$FAKE_SANDBOX" \
+  FM_DOMAIN_CODEX_BIN="$FAKE_DARWIN_CODEX" FM_DOMAIN_CODEX_AUTH="$AUTH" \
+  "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX") \
+  || fail "Darwin question must dispatch through sandbox-exec"
+[ "$out" = 'darwin lane answer' ] || fail "Darwin lane answer must be returned"
+pass "Darwin questions use the supported ephemeral isolation boundary"
+
 printf '%s\n' '{"chat_id":-999,"text":"untagged question"}' > "$INBOX"
 if FM_HOME="$HOME_DIR" FM_DOMAIN_CODEX_BIN="$FAKE_CODEX" FM_DOMAIN_CODEX_AUTH="$AUTH" \
   "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX" >/dev/null 2>&1; then
