@@ -177,7 +177,7 @@ Treat `state/x-inbox/` as the source of truth and process **every** file you fin
       `in_reply_to_chain` is the optional surrounding-conversation transcript; [the Relay configuration reference](../../../docs/configuration.md#relay-env) owns its exact wire shape and compatibility semantics.
       Read every entry in its documented oldest-first order, including `history` entries and unavailable gaps, but treat the chain as optional context because it is often absent today: use it when present and proceed normally without it.
       Ignore `tweet_id` entirely - you never name a platform message id; the relay binds the reply for you.
-      Classify the mention, then route every question before any question-specific handling by running `bin/fm-domain-question.sh --runner <ephemeral-lane-runner> state/x-inbox/<request_id>.json`.
+      Classify the mention, then route every question before any question-specific handling by running `bin/fm-domain-question.sh state/x-inbox/<request_id>.json`.
       Its result is authoritative: an exact configured `chat_id` binding wins, otherwise exactly one `#Com.<domain>` tag selects the domain, and an ask result or any validation failure requires asking the captain which domain applies.
       Never infer a domain from the question's wording, nearby conversation, memory contents, or the apparent subject matter.
       Only the ephemeral runner's answer may answer a routed question; Firstmate does not answer it from its own context, another domain, or a resident domain process.
@@ -199,7 +199,7 @@ Treat `state/x-inbox/` as the source of truth and process **every** file you fin
       Genuine milestone updates and the final outcome come later as follow-ups.
       The terminal reply uses `--final` when no typed promised-final commitment exists.
       If the work completed in this turn (a backlog item filed, a question answered), there is no task to link and step 2d reports the outcome directly.
-   d. **Compose the reply.** For a question, answer `.text` from the evidence gathered in step 1.
+   d. **Compose the reply.** For a question, use only the validated lane output from step 2a; when routing or lane validation failed, ask for the missing domain or report the failure instead of answering.
       For an actionable request that completed now, report the verified result.
       For an action that still needs confirmation, say it has not run and ask the action-specific question required by the resolved mode.
       For a linked task, report durable registration and the next expected outcome without promising a result that does not exist.

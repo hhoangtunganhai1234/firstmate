@@ -344,9 +344,10 @@ Question wording and surrounding conversation never select a domain.
 The file is optional; without it, tagged questions still route and untagged questions require clarification.
 
 Each routable domain has memory files under `data/domains/<domain>/` and a binding at `config/domain-bindings/<domain>.json`.
-The binding is a JSON object with a non-empty `source` and `"mode":"read-only"`.
-`bin/fm-domain-question.sh` is the question intake boundary: it accepts a Relay inbox record, invokes resolution, and gives the ephemeral lane runner one `fm-domain-lane.v1` object containing only the selected domain's memory and validated read-only binding.
-Missing memory, missing or invalid bindings, malformed inbox records, and invalid routing configuration fail closed without invoking the runner.
+The binding is a JSON object with `"mode":"read-only"` and a non-empty `source` path, relative to the Firstmate home or absolute.
+`bin/fm-domain-question.sh` is the question intake boundary: it accepts a Relay inbox record and runs one `codex exec --ephemeral` lane inside a Bubblewrap mount namespace.
+That namespace mounts only the selected domain memory, its binding, and its bound data source read-only, with one answer directory as the only writable host surface.
+Missing dependencies, memory, sources, bindings, malformed inbox records, and invalid routing configuration fail closed before an answer is accepted.
 
 ## Relay (.env)
 
