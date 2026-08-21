@@ -6,7 +6,7 @@ set -eu
 
 DISPATCH="$ROOT/bin/fm-domain-question.sh"
 TMP_ROOT=$(fm_test_tmproot fm-domain-question)
-HOME_DIR="$TMP_ROOT/home"
+HOME_DIR="$TMP_ROOT/.hidden/home"
 mkdir -p "$HOME_DIR/config/domain-bindings" "$HOME_DIR/data/domains/sale" \
   "$HOME_DIR/data/domains/pnl" "$HOME_DIR/data/sources/sale" "$HOME_DIR/state"
 printf '%s\n' '{"chat_domains":{"-1001":"sale"}}' > "$HOME_DIR/routes.json"
@@ -41,9 +41,15 @@ for argument in "$@"; do
   esac
 done
 [ "${PWD##*/}" != "home" ]
-case "$PWD" in */state/.domain-lane.*) isolated=1 ;; esac
+case "$PWD" in */fm-domain-lane.*) isolated=1 ;; esac
 [ "$isolated" -eq 1 ]
 [ ! -e CLAUDE.md ] && [ ! -e AGENTS.md ]
+ancestor=$PWD
+while [ "$ancestor" != / ]; do
+  [ ! -e "$ancestor/CLAUDE.md" ] && [ ! -e "$ancestor/AGENTS.md" ]
+  ancestor=${ancestor%/*}
+  [ -n "$ancestor" ] || ancestor=/
+done
 case "${FM_DOMAIN_HARNESS:-}" in
   grok|muse) [ "$prompt_file" = prompt ]; payload=$(cat "$prompt_file") ;;
   kimi)
@@ -71,7 +77,8 @@ RUNNER
 chmod +x "$FAKE_HARNESS"
 
 run_lane() {
-  FM_HOME="$HOME_DIR" FM_DOMAIN_HARNESS="${FM_TEST_DOMAIN_HARNESS:-claude}" FM_DOMAIN_HARNESS_BIN="$FAKE_HARNESS" \
+  FM_HOME="$HOME_DIR" FM_DOMAIN_LANE_TMP_ROOT="$TMP_ROOT" \
+    FM_DOMAIN_HARNESS="${FM_TEST_DOMAIN_HARNESS:-claude}" FM_DOMAIN_HARNESS_BIN="$FAKE_HARNESS" \
     "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX"
 }
 
@@ -116,7 +123,8 @@ out=$(run_lane) || fail "large snapshots must stream without argv expansion"
 [ "$out" = 'sale lane answer' ] || fail "large snapshot lane answer must be returned"
 pass "multi-megabyte snapshots stream outside argv"
 
-if FM_HOME="$HOME_DIR" FM_DOMAIN_HARNESS=unknown FM_DOMAIN_HARNESS_BIN="$FAKE_HARNESS" \
+if FM_HOME="$HOME_DIR" FM_DOMAIN_LANE_TMP_ROOT="$TMP_ROOT" \
+  FM_DOMAIN_HARNESS=unknown FM_DOMAIN_HARNESS_BIN="$FAKE_HARNESS" \
   "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX" >/dev/null 2>&1; then
   fail "unknown harness boundary must fail closed"
 fi

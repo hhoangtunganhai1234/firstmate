@@ -51,7 +51,19 @@ else
   exit 2
 fi
 
-LANE_TMP=$(mktemp -d "$FM_HOME/state/.domain-lane.XXXXXX") || exit 2
+LANE_ROOT=${FM_DOMAIN_LANE_TMP_ROOT:-${TMPDIR:-/tmp}}
+[ -d "$LANE_ROOT" ] && [ ! -L "$LANE_ROOT" ] \
+  || { echo "fm-domain-question: unavailable lane temporary root" >&2; exit 2; }
+LANE_ROOT=$(CDPATH='' cd "$LANE_ROOT" && pwd -P)
+FM_HOME_REAL=$(CDPATH='' cd "$FM_HOME" && pwd -P)
+FM_ROOT_REAL=$(CDPATH='' cd "$FM_ROOT" && pwd -P)
+case "$LANE_ROOT" in
+  "$FM_HOME_REAL"|"$FM_HOME_REAL"/*|"$FM_ROOT_REAL"|"$FM_ROOT_REAL"/*)
+    echo "fm-domain-question: lane temporary root is inside project ancestry" >&2
+    exit 2
+    ;;
+esac
+LANE_TMP=$(mktemp -d "$LANE_ROOT/fm-domain-lane.XXXXXX") || exit 2
 trap 'rm -rf "$LANE_TMP"' EXIT INT TERM
 
 snapshot_path() {
@@ -60,11 +72,13 @@ snapshot_path() {
     jq -n --arg name "$(basename "$root")" --rawfile content "$root" '[{name:$name,content:$content}]'
     return
   fi
-  find "$root" -type f ! -path '*/.*' -print0 \
+  find "$root" -type f -print0 \
     | sort -z \
     | while IFS= read -r -d '' file; do
+        relative=${file#"$root"/}
+        case "$relative" in .*|*/.*) continue ;; esac
         [ ! -L "$file" ] || exit 2
-        jq -n --arg name "${file#"$root"/}" --rawfile content "$file" '{name:$name,content:$content}'
+        jq -n --arg name "$relative" --rawfile content "$file" '{name:$name,content:$content}'
       done \
     | jq -s '.'
 }
