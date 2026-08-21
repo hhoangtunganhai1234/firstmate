@@ -14,87 +14,69 @@ printf '%s\n' '{"mode":"read-only","source":"data/sources/sale"}' > "$HOME_DIR/c
 printf '%s\n' 'sale memory' > "$HOME_DIR/data/domains/sale/brief.md"
 printf '%s\n' 'pnl secret' > "$HOME_DIR/data/domains/pnl/brief.md"
 printf '%s\n' 'sale facts' > "$HOME_DIR/data/sources/sale/facts.txt"
-AUTH="$TMP_ROOT/auth.json"
-printf '%s\n' '{}' > "$AUTH"
 
-RUNNER_DIR="$TMP_ROOT/runner-bin"
-mkdir -p "$RUNNER_DIR"
-FAKE_CODEX="$RUNNER_DIR/codex"
-cat > "$FAKE_CODEX" <<RUNNER
+FAKE_HARNESS="$TMP_ROOT/harness"
+cat > "$FAKE_HARNESS" <<'RUNNER'
 #!/bin/sh
 set -eu
-answer=
+tools_disabled=0
 previous=
-shell_disabled=0
-for argument in "\$@"; do
-  if [ "\$previous" = output ]; then answer=\$argument; fi
-  if [ "\$previous" = disable ] && [ "\$argument" = shell_tool ]; then shell_disabled=1; fi
-  case "\$argument" in
-    --output-last-message) previous=output ;;
-    --disable) previous=disable ;;
-    *) previous= ;;
-  esac
+for argument in "$@"; do
+  if [ "$previous" = tools ] && [ -z "$argument" ]; then tools_disabled=1; fi
+  if [ "$argument" = --no-tools ]; then tools_disabled=1; fi
+  if [ "$argument" = --tools ]; then previous=tools; else previous=; fi
 done
-[ "\$shell_disabled" -eq 1 ]
-if [ "\$(pwd)" = /lane ]; then
-  [ "\$(cat /lane/memory/brief.md)" = 'sale memory' ]
-  [ "\$(cat /lane/data/facts.txt)" = 'sale facts' ]
-  [ ! -e '$HOME_DIR/data/domains/pnl' ]
-  if printf probe > /lane/data/probe 2>/dev/null; then exit 20; fi
-else
-  [ "\$(cat memory/brief.md)" = 'sale memory' ]
-  [ "\$(cat data/facts.txt)" = 'sale facts' ]
-  if cat '$HOME_DIR/data/domains/pnl/brief.md' >/dev/null 2>&1; then exit 21; fi
-  if printf probe > data/probe 2>/dev/null; then exit 22; fi
-fi
-payload=\$(cat)
-printf '%s' "\$payload" | grep -F 'sale memory' >/dev/null
-printf '%s' "\$payload" | grep -F 'sale facts' >/dev/null
-if printf '%s' "\$payload" | grep -F 'pnl secret' >/dev/null; then exit 23; fi
-printf '%s\n' 'sale lane answer' > "\$answer"
+[ "$tools_disabled" -eq 1 ]
+payload=$(cat)
+printf '%s' "$payload" | grep -F 'sale memory' >/dev/null
+printf '%s' "$payload" | grep -F 'sale facts' >/dev/null
+if printf '%s' "$payload" | grep -F 'pnl secret' >/dev/null; then exit 23; fi
+printf '%s\n' 'sale lane answer'
 RUNNER
-chmod +x "$FAKE_CODEX"
+chmod +x "$FAKE_HARNESS"
+
+run_lane() {
+  FM_HOME="$HOME_DIR" FM_DOMAIN_HARNESS="${FM_TEST_DOMAIN_HARNESS:-claude}" FM_DOMAIN_HARNESS_BIN="$FAKE_HARNESS" \
+    "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX"
+}
 
 INBOX="$TMP_ROOT/inbox.json"
 printf '%s\n' '{"chat_id":-1001,"text":"#Com.pnl compare performance"}' > "$INBOX"
-out=$(FM_HOME="$HOME_DIR" FM_DOMAIN_CODEX_BIN="$FAKE_CODEX" FM_DOMAIN_CODEX_AUTH="$AUTH" \
-  "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX") \
-  || fail "mapped question must dispatch its constrained lane"
+out=$(run_lane) || fail "mapped question must dispatch its constrained lane"
 [ "$out" = 'sale lane answer' ] || fail "lane answer must be returned"
-[ ! -e "$HOME_DIR/data/sources/sale/probe" ] || fail "lane must not mutate its bound data source"
-pass "real lane entry point isolates memory and read-only data"
+pass "current harness receives only selected snapshots without tools"
 
-if [ "$(uname -s)" = Darwin ]; then
-  pass "Darwin sandbox-exec denies cross-domain reads and data writes"
-else
-  printf '%s\n' "skip - Darwin sandbox-exec isolation proof requires macOS"
-fi
+out=$(FM_TEST_DOMAIN_HARNESS=pi run_lane) || fail "Pi must use the same harness-neutral lane boundary"
+[ "$out" = 'sale lane answer' ] || fail "Pi lane answer must be returned"
+pass "harness-neutral dispatch does not require Codex"
 
 printf '%s\n' '{"text":"tag fallback #Com.sale"}' > "$INBOX"
-out=$(FM_HOME="$HOME_DIR" FM_DOMAIN_CODEX_BIN="$FAKE_CODEX" FM_DOMAIN_CODEX_AUTH="$AUTH" \
-  "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX") \
-  || fail "tagged question without chat_id must route"
+out=$(run_lane) || fail "tagged question without chat_id must route"
 [ "$out" = 'sale lane answer' ] || fail "tag fallback lane answer must be returned"
 pass "missing chat ids fall through to tag routing"
 
 printf '%s\n' '{"chat_id":null,"text":"#Com.sale"}' > "$INBOX"
-if FM_HOME="$HOME_DIR" FM_DOMAIN_CODEX_BIN="$FAKE_CODEX" FM_DOMAIN_CODEX_AUTH="$AUTH" \
-  "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX" >/dev/null 2>&1; then
-  fail "malformed supplied chat_id must fail closed"
-fi
+if run_lane >/dev/null 2>&1; then fail "malformed supplied chat_id must fail closed"; fi
 pass "malformed supplied chat ids fail closed"
 
 printf '%s\n' '{"chat_id":-999,"text":"untagged question"}' > "$INBOX"
-if FM_HOME="$HOME_DIR" FM_DOMAIN_CODEX_BIN="$FAKE_CODEX" FM_DOMAIN_CODEX_AUTH="$AUTH" \
-  "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX" >/dev/null 2>&1; then
-  fail "untagged question must require clarification"
-fi
+if run_lane >/dev/null 2>&1; then fail "untagged question must require clarification"; fi
 pass "every unrouteable question fails closed before dispatch"
 
 printf '%s\n' '{"mode":"write","source":"data/sources/sale"}' > "$HOME_DIR/config/domain-bindings/sale.json"
 printf '%s\n' '{"chat_id":-1001,"text":"question"}' > "$INBOX"
-if FM_HOME="$HOME_DIR" FM_DOMAIN_CODEX_BIN="$FAKE_CODEX" FM_DOMAIN_CODEX_AUTH="$AUTH" \
-  "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX" >/dev/null 2>&1; then
-  fail "writable binding must fail closed"
-fi
+if run_lane >/dev/null 2>&1; then fail "writable binding must fail closed"; fi
 pass "writable bindings are rejected before dispatch"
+
+printf '%s\n' '{"mode":"read-only","source":"data/sources/sale"}' > "$HOME_DIR/config/domain-bindings/sale.json"
+dd if=/dev/zero bs=1048576 count=3 2>/dev/null | tr '\0' x > "$HOME_DIR/data/sources/sale/large.txt"
+printf '%s\n' '{"chat_id":-1001,"text":"large source"}' > "$INBOX"
+out=$(run_lane) || fail "large snapshots must stream without argv expansion"
+[ "$out" = 'sale lane answer' ] || fail "large snapshot lane answer must be returned"
+pass "multi-megabyte snapshots stream outside argv"
+
+if FM_HOME="$HOME_DIR" FM_DOMAIN_HARNESS=grok FM_DOMAIN_HARNESS_BIN="$FAKE_HARNESS" \
+  "$DISPATCH" --routes "$HOME_DIR/routes.json" "$INBOX" >/dev/null 2>&1; then
+  fail "unverified tool-free harness boundary must fail closed"
+fi
+pass "harnesses without verified tool-free mode fail closed"

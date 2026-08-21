@@ -345,9 +345,9 @@ The file is optional; without it, tagged questions still route and untagged ques
 
 Each routable domain has memory files under `data/domains/<domain>/` and a binding at `config/domain-bindings/<domain>.json`.
 The binding is a JSON object with `"mode":"read-only"` and a non-empty `source` path, relative to the Firstmate home or absolute.
-`bin/fm-domain-question.sh` is the question intake boundary: it accepts a Relay inbox record and runs one `codex exec --ephemeral` lane inside Bubblewrap on Linux or a `sandbox-exec` allowlist on macOS.
-The credential-holding Codex process receives broker-read snapshots of only the selected memory and data source with every model execution and external-tool feature disabled.
-Each OS boundary additionally exposes only the selected domain inputs read-only, with private scratch and answer directories as the only writable host surfaces, so authentication is never reachable through a lane-visible tool.
+`bin/fm-domain-question.sh` is the question intake boundary: it accepts a Relay inbox record, resolves the current Firstmate harness, and runs its verified tool-free ephemeral mode.
+Claude, Codex, Pi, and Pi Signed have verified tool-free one-shot adapters; every other harness fails closed until it has an equivalent verified boundary.
+The harness receives broker-read snapshots of only the selected memory and data source, streamed through private files rather than command arguments, and no lane-visible tool can reach credentials or another domain.
 Missing dependencies, memory, sources, bindings, malformed inbox records, and invalid routing configuration fail closed before an answer is accepted.
 
 ## Relay (.env)
