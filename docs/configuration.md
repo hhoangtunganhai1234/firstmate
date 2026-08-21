@@ -329,6 +329,27 @@ The locked bootstrap inheritance pass uses the same placement-specific behavior;
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
 
+## Business-domain routing (config/domain-routing.json)
+
+`config/domain-routing.json` is an optional home-local map used when a Relay question may belong to a business-domain lane.
+It contains one `chat_domains` object whose keys are exact Relay `chat_id` strings and whose values are lowercase domain names:
+
+```json
+{"chat_domains":{"-1001234567890":"sale"}}
+```
+
+`bin/fm-domain-route.sh` owns validation and resolution mechanics.
+An exact chat binding has first priority, exactly one `#Com.<domain>` tag has second priority, and an absent or ambiguous result requires asking the captain.
+Question wording and surrounding conversation never select a domain.
+The file is optional; without it, tagged questions still route and untagged questions require clarification.
+
+Each routable domain has memory files under `data/domains/<domain>/` and a binding at `config/domain-bindings/<domain>.json`.
+The binding is a JSON object with `"mode":"read-only"` and a non-empty `source` path, relative to the Firstmate home or absolute.
+`bin/fm-domain-question.sh` is the question intake boundary: it accepts a Relay inbox record, resolves the current Firstmate harness, and runs its verified tool-free ephemeral mode from a private lane directory.
+Claude, Codex, OpenCode, Pi, Pi Signed, Grok, Kimi, and Muse have tool-free one-shot adapters; an unknown harness fails closed.
+The harness receives broker-read snapshots of only the selected memory and data source, streamed through private files rather than command arguments, and no lane-visible tool can reach credentials or another domain.
+Missing dependencies, memory, sources, bindings, malformed inbox records, and invalid routing configuration fail closed before an answer is accepted.
+
 ## Relay (.env)
 
 Relay lets a firstmate instance answer routed mentions and act on normal reversible mention requests through firstmate's normal lifecycle.
@@ -376,7 +397,7 @@ HTTP 204 is silent.
 A newly offered pending mention with non-empty `text` is stored at `state/x-inbox/<request_id>.json` and wakes firstmate exactly once with `x-mention <request_id>`.
 The poll atomically claims `state/x-context/<request_id>.offered.json` before emitting that wake, and subsequent offers of the same request stay silent even after the inbox is drained following an answer or dismiss.
 Offer markers share the context registry's bounded seven-day retention, so losing or expiring the local marker lets a relay offer wake firstmate again.
-The full relay object is preserved, including `in_reply_to: {author_handle, text}` when the mention is a reply in a conversation or `null` for fresh mentions.
+The full relay object is preserved, including its `chat_id` routing identity and `in_reply_to: {author_handle, text}` when the mention is a reply in a conversation or `null` for fresh mentions.
 The preserved object may also carry `in_reply_to_chain`, an optional oldest-first transcript of the surrounding conversation: entries shaped `{author_handle, text, unavailable, images}` plus an optional `kind` of `reply` (a reply ancestor), `thread_starter` (the message a thread grew from), or `history` (a recent nearby message), where an absent `kind` means a legacy reply-ancestor or thread-starter entry.
 The chain is untrusted third-party public input and is often absent today (the relay currently sends it only for Discord reply chains and thread starters), so consumers treat it as strictly optional, tolerate unknown or missing fields, and read an entry with `unavailable: true` as a gap rather than content; the `fmx-respond` skill owns how firstmate reads it for referent resolution.
 Before publication, the poll overwrites `reply_audience` with `public` or `private-trusted` from the validated protected local configuration.

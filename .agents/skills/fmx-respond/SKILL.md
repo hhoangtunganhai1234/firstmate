@@ -81,7 +81,7 @@ When recovery replaces a linked task, carry the prior count, timestamp, platform
 Every drained mention sorts into one of three cases:
 
 - **Actionable instruction or request** starts the normal lifecycle and receives either the verified immediate outcome, an evidence-backed start acknowledgment, or an honest start failure.
-- **Question** receives an answer from current evidence and creates no follow-up.
+- **Question** receives only the validated routed lane's answer and creates no follow-up.
 - **Pure acknowledgment** posts no reply, but is dismissed through `bin/fm-x-dismiss.sh <request_id>` before inbox cleanup.
 
 Normal reversible work proceeds under the standing Relay authorization.
@@ -171,15 +171,19 @@ Treat `state/x-inbox/` as the source of truth and process **every** file you fin
    Distinguish automated checks, merge state, deployment or data-write state, and live verification whenever the difference affects readiness.
    Translate internal items into outcomes while preserving the evidence needed for a decision.
 2. **Drain every pending mention.** For each `state/x-inbox/*.json` file:
-   a. Read the object: you need `request_id`, `text`, `in_reply_to`, the poll-stamped `reply_audience`, and - when present - `in_reply_to_chain`.
+   a. Read the object: you need `request_id`, `text`, `chat_id`, `in_reply_to`, the poll-stamped `reply_audience`, and - when present - `in_reply_to_chain`.
       Resolve public or private-trusted mode for this request before classifying or composing it.
       `in_reply_to` is `{author_handle, text}` when this mention is a reply within an ongoing conversation, or `null` for a fresh, standalone mention.
       `in_reply_to_chain` is the optional surrounding-conversation transcript; [the Relay configuration reference](../../../docs/configuration.md#relay-env) owns its exact wire shape and compatibility semantics.
       Read every entry in its documented oldest-first order, including `history` entries and unavailable gaps, but treat the chain as optional context because it is often absent today: use it when present and proceed normally without it.
       Ignore `tweet_id` entirely - you never name a platform message id; the relay binds the reply for you.
+      Classify the mention, then route every question before any question-specific handling by running `bin/fm-domain-question.sh state/x-inbox/<request_id>.json`.
+      Its result is authoritative: an exact configured `chat_id` binding wins, otherwise exactly one `#Com.<domain>` tag selects the domain, and an ask result or any validation failure requires asking the captain which domain applies.
+      Never infer a domain from the question's wording, nearby conversation, memory contents, or the apparent subject matter.
+      Only the ephemeral runner's answer may answer a routed question; Firstmate does not answer it from its own context, another domain, or a resident domain process.
    b. **Classify the mention into one of three cases** (see "Register requested work before acknowledging it"):
       - **Actionable instruction / request** ("add this to the backlog", "look into X", "fix Y", "ship Z") - go to step 2c and do the work first.
-      - **Question** - nothing to do; skip step 2c and answer from live fleet state in step 2d.
+      - **Question** - use the routed lane result from step 2a; skip step 2c and deliver that result in step 2d, or ask the captain when routing failed closed.
       - **Pure acknowledgment** ("thanks", "👍", "nice", "got it", a reaction, or a follow-up that just closes the loop with nothing to add) - **skip**: post nothing, but **dismiss it at the relay** (step 2e-skip), then remove the inbox file (the cleanup of step 2f), and move on **without** calling `bin/fm-x-reply.sh`. A deliberate non-answer is the correct outcome here, not a failure.
       When in doubt between an instruction and a question, do the smallest safe lifecycle step the request implies.
       When in doubt between a question and bare politeness, lean toward skipping because a needless reply is noise.
@@ -195,7 +199,7 @@ Treat `state/x-inbox/` as the source of truth and process **every** file you fin
       Genuine milestone updates and the final outcome come later as follow-ups.
       The terminal reply uses `--final` when no typed promised-final commitment exists.
       If the work completed in this turn (a backlog item filed, a question answered), there is no task to link and step 2d reports the outcome directly.
-   d. **Compose the reply.** For a question, answer `.text` from the evidence gathered in step 1.
+   d. **Compose the reply.** For a question, use only the validated lane output from step 2a; when routing or lane validation failed, ask for the missing domain or report the failure instead of answering.
       For an actionable request that completed now, report the verified result.
       For an action that still needs confirmation, say it has not run and ask the action-specific question required by the resolved mode.
       For a linked task, report durable registration and the next expected outcome without promising a result that does not exist.

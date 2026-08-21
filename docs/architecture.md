@@ -255,6 +255,7 @@ On the locked session-start bootstrap step, that token creates the local polling
 Without the token, the locked session-start bootstrap step removes those artifacts on opt-out and otherwise stays silent, so non-Relay users see no behavior change.
 Newly offered mentions are stored as `state/x-inbox/<request_id>.json` and wake firstmate once per retained request ID; the [Relay configuration reference](configuration.md#relay-env) owns the durable offer-marker and re-offer contract.
 The `fmx-respond` agent-only skill drains that inbox, resolves its fail-closed audience stamp, uses the preserved Relay conversation context for continuity under the wire contract owned by the [Relay configuration reference](configuration.md#relay-env), classifies each mention as an actionable request, question, or pure acknowledgment, and submits audience-safe replies through `bin/fm-x-reply.sh`.
+Questions cross the fail-closed business-domain intake boundary before question-specific handling; the [business-domain routing reference](configuration.md#business-domain-routing-configdomain-routingjson) owns its current setup and resolution contract.
 When a reply has a real visual artifact, `--image <path>` attaches one local PNG, JPEG, GIF, WebP, BMP, or TIFF to the relay's optional `{media_type,data_base64}` image object.
 Actionable reversible requests run through firstmate's normal intake, backlog, dispatch, investigation, or ship lifecycle.
 Work that completes in the answering turn gets one outcome reply.
